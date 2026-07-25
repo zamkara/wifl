@@ -72,7 +72,7 @@ jobs:
           chmod +x ci/bundle-tools.sh
           ci/bundle-tools.sh "${{ matrix.platform }}" "$PWD/bundled-tools"
           echo "WIFL_WIMLIB_IMAGEX=$PWD/bundled-tools/wimlib-imagex" >> "$GITHUB_ENV"
-          echo "WIFL_SGDISK=$PWD/bundled-tools/sgdisk"               >> "$GITHUB_ENV"
+          echo "WIFL_SFDISK=$PWD/bundled-tools/sfdisk"               >> "$GITHUB_ENV"
           echo "WIFL_MKNTFS=$PWD/bundled-tools/mkntfs"               >> "$GITHUB_ENV"
           echo "WIFL_MKFS_FAT=$PWD/bundled-tools/mkfs.fat"           >> "$GITHUB_ENV"
           echo "WIFL_PARTPROBE=$PWD/bundled-tools/partprobe"         >> "$GITHUB_ENV"

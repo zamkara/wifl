@@ -43,7 +43,7 @@ docker run --rm --platform "$PLATFORM" \
         }
 
         grab wimlib-imagex wimlib
-        grab sgdisk        gptfdisk
+        grab sfdisk        sfdisk
         grab mkntfs        ntfs-3g-progs
         grab mkfs.fat      dosfstools
         grab partprobe     parted

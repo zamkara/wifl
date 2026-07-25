@@ -3,7 +3,7 @@ use std::{env, fs, path::PathBuf};
 // (name, env-var-key, safe filename for include_bytes!)
 const TOOLS: &[(&str, &str, &str)] = &[
     ("wimlib-imagex", "WIFL_WIMLIB_IMAGEX", "wimlib_imagex"),
-    ("sgdisk",        "WIFL_SGDISK",        "sgdisk"),
+    ("sfdisk",        "WIFL_SFDISK",        "sfdisk"),
     ("mkntfs",        "WIFL_MKNTFS",        "mkntfs"),
     ("mkfs.fat",      "WIFL_MKFS_FAT",      "mkfs_fat"),
     ("partprobe",     "WIFL_PARTPROBE",     "partprobe"),

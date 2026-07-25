@@ -115,13 +115,27 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
 
     // ── partition ─────────────────────────────────────────────────────────────
     step("partitioning disk  (GPT · UEFI)");
-    run(&tools.sgdisk, &["--zap-all", &disk_dev])?;
-    run(&tools.sgdisk, &[
-        "-n", "1:0:+1G",  "-t", "1:ef00", "-c", "1:EFI System",
-        "-n", "2:0:+16M", "-t", "2:0c01", "-c", "2:Microsoft Reserved",
-        "-n", "3:0:0",    "-t", "3:0700", "-c", "3:Windows",
-        &disk_dev,
-    ])?;
+    {
+        use std::io::Write as _;
+        let mut child = Command::new(&tools.sfdisk)
+            .args(["--label", "gpt", "--wipe", "always", "--wipe-partitions", "always", &disk_dev])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .context("spawn sfdisk")?;
+        if let Some(mut stdin) = child.stdin.take() {
+            // EFI System / Microsoft Reserved / Windows Basic Data
+            stdin.write_all(
+                b"name=\"EFI System\",          size=1GiB,  type=uefi\n\
+                  name=\"Microsoft Reserved\",   size=16MiB, type=msreserved\n\
+                  name=\"Windows\"\n",
+            )?;
+        }
+        if !child.wait().context("sfdisk wait")?.success() {
+            bail!("sfdisk failed");
+        }
+    }
 
     step("waiting for kernel to register partitions");
     run(&tools.partprobe, &[&disk_dev])?;

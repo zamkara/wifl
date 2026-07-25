@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result};
 use std::os::unix::fs::PermissionsExt;
 
 static WIMLIB_IMAGEX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/wimlib_imagex"));
-static SGDISK:        &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sgdisk"));
+static SFDISK:        &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sfdisk"));
 static MKNTFS:        &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mkntfs"));
 static MKFS_FAT:      &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mkfs_fat"));
 static PARTPROBE:     &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/partprobe"));
@@ -16,7 +16,7 @@ static FUSER:         &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/fuser"))
 pub struct Tools {
     _dir:           PathBuf,
     pub wimlib:     PathBuf,
-    pub sgdisk:     PathBuf,
+    pub sfdisk:     PathBuf,
     pub mkntfs:     PathBuf,
     pub mkfs_fat:   PathBuf,
     pub partprobe:  PathBuf,
@@ -40,8 +40,8 @@ impl Tools {
         Ok(Self {
             wimlib:     slot(&dir, "wimlib-imagex", WIMLIB_IMAGEX,
                 "wimlib: pacman -S wimlib  |  apt install wimlib  |  brew install wimlib")?,
-            sgdisk:     slot(&dir, "sgdisk",        SGDISK,
-                "gptfdisk: pacman -S gptfdisk  |  apt install gdisk  |  brew install gptfdisk")?,
+            sfdisk:     slot(&dir, "sfdisk",        SFDISK,
+                "util-linux: pacman -S util-linux  |  apt install util-linux")?,
             mkntfs:     slot(&dir, "mkntfs",        MKNTFS,
                 "ntfsprogs: pacman -S ntfs-3g  |  apt install ntfs-3g")?,
             mkfs_fat:   slot(&dir, "mkfs.fat",      MKFS_FAT,
