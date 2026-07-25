@@ -50,8 +50,9 @@ docker run --rm --platform "$PLATFORM" \
         grab efibootmgr    efibootmgr
         grab lsblk         lsblk
         grab fuser         psmisc
+
+        chmod +x /out/*
     '
 
-chmod +x "$OUT"/*
 echo "bundled tools:"
 ls -lh "$OUT"
