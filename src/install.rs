@@ -126,10 +126,12 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
             .context("spawn sfdisk")?;
         if let Some(mut stdin) = child.stdin.take() {
             // EFI System / Microsoft Reserved / Windows Basic Data
+            // Use GUIDs directly — type aliases like 'msreserved' aren't
+            // recognised by older sfdisk versions.
             stdin.write_all(
-                b"name=\"EFI System\",          size=1GiB,  type=uefi\n\
-                  name=\"Microsoft Reserved\",   size=16MiB, type=msreserved\n\
-                  name=\"Windows\"\n",
+                b"name=\"EFI System\",        size=1GiB,  type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B\n\
+                  name=\"Microsoft Reserved\", size=16MiB, type=E3C9E316-0B5C-4DB8-817D-F92DF00215AE\n\
+                  name=\"Windows\",                        type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n",
             )?;
         }
         if !child.wait().context("sfdisk wait")?.success() {
