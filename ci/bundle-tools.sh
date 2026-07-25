@@ -1,7 +1,6 @@
 #!/bin/sh
-# Collect static tool binaries from an Alpine container for the given docker platform.
+# Collect tool binaries from an Alpine container for the given docker platform.
 # Usage: bundle-tools.sh <docker-platform> <wimlib-url> <out-dir>
-# Called by the GitHub Actions workflow.
 set -e
 
 PLATFORM="$1"
@@ -15,12 +14,11 @@ if [ -n "$WIMLIB_URL" ]; then
     curl -fsSL "$WIMLIB_URL" \
         | tar xz --wildcards "*/wimlib-imagex" --strip-components=1 -C "$OUT/"
 else
-    # Pull from Alpine (available for all arches)
     docker run --rm --platform "$PLATFORM" \
         -v "$OUT:/out" \
         alpine:latest sh -c '
             apk add --no-scripts wimlib
-            cp "$(which wimlib-imagex)" /out/wimlib-imagex
+            cp "$(find /usr/bin /bin -name wimlib-imagex | head -1)" /out/wimlib-imagex
         '
 fi
 
@@ -29,14 +27,25 @@ docker run --rm --platform "$PLATFORM" \
     -v "$OUT:/out" \
     alpine:latest sh -c '
         apk add --no-scripts gptfdisk ntfs-3g ntfs-3g-progs dosfstools parted efibootmgr util-linux psmisc
-        # Helper: find binary and copy to /out
+
         grab() {
             name="$1"
-            bin=$(which "$name" 2>/dev/null \
-                || find /usr/sbin /sbin /usr/bin /bin -name "$name" 2>/dev/null | head -1)
-            [ -n "$bin" ] || { echo "ERROR: $name not found"; exit 1; }
+            # search common Alpine bin locations + full usr tree
+            bin=$(find /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin \
+                       -name "$name" 2>/dev/null | head -1)
+            if [ -z "$bin" ]; then
+                # last resort — full search (slow but reliable)
+                bin=$(find / -xdev -name "$name" 2>/dev/null | head -1)
+            fi
+            if [ -z "$bin" ]; then
+                echo "ERROR: $name not found — installed files:"
+                apk info -L gptfdisk 2>/dev/null | grep -i "$name" || true
+                exit 1
+            fi
+            echo "  $name -> $bin"
             cp "$bin" "/out/$name"
         }
+
         grab sgdisk
         grab mkntfs
         grab mkfs.fat
@@ -47,5 +56,5 @@ docker run --rm --platform "$PLATFORM" \
     '
 
 chmod +x "$OUT"/*
-echo "bundled tools in $OUT:"
+echo "bundled tools:"
 ls -lh "$OUT"
