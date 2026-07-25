@@ -1,0 +1,183 @@
+mod api;
+mod catalog;
+mod download;
+mod install;
+mod select;
+mod tools;
+
+use std::path::PathBuf;
+use anyhow::{bail, Result};
+use catalog::EsdFile;
+
+const ESD_DIR: &str = "/home/zam/Documents/ESDs";
+
+fn main() -> Result<()> {
+    check_root()?;
+
+    println!();
+    println!("  \x1b[1mwifl\x1b[0m  windows image fetch + install");
+    println!();
+
+    info("initialising bundled tools…");
+    let t = tools::Tools::setup()?;
+
+    // ── 1. Windows version ─────────────────────────────────────────────────────
+    info("fetching available releases…");
+    let versions = api::fetch_versions()?;
+
+    if versions.is_empty() {
+        bail!("no versions returned from server");
+    }
+
+    let ver_labels: Vec<String> = versions
+        .iter()
+        .map(|v| format!("Windows {}", v.number))
+        .collect();
+
+    let ver_idx = select::select("select Windows version", &ver_labels)?;
+    let version = &versions[ver_idx];
+
+    // ── 2. Build ───────────────────────────────────────────────────────────────
+    if version.releases.is_empty() {
+        bail!("no releases for Windows {}", version.number);
+    }
+
+    let build_labels: Vec<String> = version
+        .releases
+        .iter()
+        .map(|r| format!("build {}   ({})", r.build, fmt_date(&r.date)))
+        .collect();
+
+    let build_idx = select::select("select build", &build_labels)?;
+    let build = &version.releases[build_idx].build;
+
+    // ── 3. Fetch catalog ───────────────────────────────────────────────────────
+    info(&format!("fetching catalog for build {}…", build));
+    let catalog = api::fetch_catalog(build)?;
+
+    if catalog.is_empty() {
+        bail!("catalog is empty for build {}", build);
+    }
+
+    // ── 4. Architecture ────────────────────────────────────────────────────────
+    let mut arches: Vec<String> = catalog
+        .iter()
+        .map(|f| f.architecture.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    arches.sort();
+
+    let arch_idx = select::select("select architecture", &arches)?;
+    let arch = &arches[arch_idx];
+
+    // ── 5. Language ────────────────────────────────────────────────────────────
+    let mut seen_langs = std::collections::HashSet::new();
+    let mut lang_files: Vec<&EsdFile> = catalog
+        .iter()
+        .filter(|f| &f.architecture == arch)
+        .filter(|f| seen_langs.insert(f.language_code.clone()))
+        .collect();
+    lang_files.sort_by(|a, b| a.language.cmp(&b.language));
+
+    let lang_labels: Vec<String> = lang_files
+        .iter()
+        .map(|f| format!("{}  ({})", f.language, f.language_code))
+        .collect();
+
+    let lang_idx = select::select("select language", &lang_labels)?;
+    let lang_code = &lang_files[lang_idx].language_code;
+
+    // ── 6. ESD variant ─────────────────────────────────────────────────────────
+    let candidates: Vec<&EsdFile> = catalog
+        .iter()
+        .filter(|f| &f.architecture == arch && &f.language_code == lang_code)
+        .collect();
+
+    let esd_file: &EsdFile = if candidates.len() == 1 {
+        candidates[0]
+    } else {
+        let esd_labels: Vec<String> = candidates
+            .iter()
+            .map(|f| format!("{}   {:.2} GiB", f.edition_label(), f.size_gb()))
+            .collect();
+        let esd_idx = select::select("select edition group", &esd_labels)?;
+        candidates[esd_idx]
+    };
+
+    // ── 7. Disk ────────────────────────────────────────────────────────────────
+    let disks = install::list_disks(&t)?;
+    if disks.is_empty() {
+        bail!("no block devices found");
+    }
+
+    let disk_labels: Vec<String> = disks.iter().map(|d| d.to_string()).collect();
+    let disk_idx = select::select("select destination disk", &disk_labels)?;
+    let disk = &disks[disk_idx];
+
+    // ── 8. Confirm ─────────────────────────────────────────────────────────────
+    println!();
+    println!("  \x1b[33m·\x1b[0m  all data on /dev/{} will be destroyed", disk.name);
+    println!();
+
+    let confirm_items = vec![
+        "yes — proceed".to_string(),
+        "no  — abort".to_string(),
+    ];
+    let confirm_idx = select::select("confirm?", &confirm_items)?;
+    if confirm_idx != 0 {
+        bail!("aborted");
+    }
+
+    // ── 9. Download ESD ────────────────────────────────────────────────────────
+    println!();
+    let esd_path = PathBuf::from(ESD_DIR).join(&esd_file.filename);
+    std::fs::create_dir_all(ESD_DIR)?;
+
+    download::ensure_esd(&esd_file.url, &esd_path, &esd_file.sha256, esd_file.size)?;
+
+    // ── 10. Select image index ─────────────────────────────────────────────────
+    println!();
+    info("reading image catalogue from ESD…");
+    let images = install::list_images(&t, &esd_path)?;
+
+    if images.is_empty() {
+        bail!("no installable images found in ESD");
+    }
+
+    let img_labels: Vec<String> = images.iter().map(|i| i.to_string()).collect();
+    let img_idx = select::select("select edition to install", &img_labels)?;
+    let image = &images[img_idx];
+
+    // ── 11. Install ────────────────────────────────────────────────────────────
+    println!();
+    install::install(&t, disk, &esd_path, image.index)?;
+
+    println!();
+    println!("  \x1b[1mdone\x1b[0m  reboot to continue Windows setup");
+    println!();
+    println!("  \x1b[33m·\x1b[0m  first boot may trigger Startup Repair — expected, let it complete");
+    println!();
+
+    Ok(())
+}
+
+fn check_root() -> Result<()> {
+    let out = std::process::Command::new("id").arg("-u").output()?;
+    if String::from_utf8_lossy(&out.stdout).trim() != "0" {
+        bail!("root required — run: sudo wifl");
+    }
+    Ok(())
+}
+
+fn info(msg: &str) {
+    println!("  \x1b[32m·\x1b[0m  {}", msg);
+}
+
+fn fmt_date(d: &str) -> String {
+    if d.len() == 8 {
+        format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..8])
+    } else {
+        d.to_string()
+    }
+}
