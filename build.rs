@@ -1,6 +1,5 @@
 use std::{env, fs, path::PathBuf};
 
-// (name, env-var-key, safe filename for include_bytes!)
 const TOOLS: &[(&str, &str, &str)] = &[
     ("wimlib-imagex", "WIFL_WIMLIB_IMAGEX", "wimlib_imagex"),
     ("sfdisk",        "WIFL_SFDISK",        "sfdisk"),
@@ -13,10 +12,15 @@ const TOOLS: &[(&str, &str, &str)] = &[
 ];
 
 fn main() {
-    let out = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let out       = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target    = env::var("TARGET").unwrap_or_default();
+    let tag       = env::var("TAG").unwrap_or_else(|_| "dev".to_string());
 
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=TAG");
+    println!("cargo:rustc-env=WIFL_BUILD_TAG={}", tag);
+    println!("cargo:rustc-env=WIFL_TARGET={}", target);
 
     for (name, env_key, filename) in TOOLS {
         println!("cargo:rerun-if-env-changed={}", env_key);
@@ -32,7 +36,6 @@ fn main() {
             }
         }
 
-        // Placeholder — not bundled; falls back to system PATH at runtime.
         fs::write(&dest, []).expect("write placeholder");
     }
 }

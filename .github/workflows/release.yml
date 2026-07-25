@@ -15,28 +15,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ── Linux x86_64 ─────────────────────────────────────────────────────
-          - target:    x86_64-unknown-linux-musl
-            os:        ubuntu-latest
-            platform:  linux/amd64
-            bundle:    true
+          - target: x86_64-unknown-linux-musl
+            os:     ubuntu-latest
+            docker: linux/amd64
 
-          # ── Linux ARM64 ───────────────────────────────────────────────────────
-          - target:    aarch64-unknown-linux-musl
-            os:        ubuntu-24.04-arm
-            platform:  linux/arm64
-            bundle:    true
+          - target: aarch64-unknown-linux-musl
+            os:     ubuntu-24.04-arm
+            docker: linux/arm64
 
-          # ── Linux ARMv7 — cross (ring needs ARM toolchain; tools via PATH) ────
-          - target:    armv7-unknown-linux-musleabihf
-            os:        ubuntu-latest
-            use_cross: true
+          # armv7: bundle tools via QEMU Alpine, compile via cross
+          - target:     armv7-unknown-linux-musleabihf
+            os:         ubuntu-latest
+            docker:     linux/arm/v7
+            use_cross:  true
 
-          # ── macOS Intel (cross-compiled from ARM runner) ──────────────────────
           - target: x86_64-apple-darwin
             os:     macos-latest
 
-          # ── macOS Apple Silicon ───────────────────────────────────────────────
           - target: aarch64-apple-darwin
             os:     macos-latest
 
@@ -56,32 +51,65 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install musl tools (Linux native)
+      - name: Install musl tools
         if: runner.os == 'Linux' && !matrix.use_cross
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y musl-tools
 
-      - name: Install cross (ARMv7)
+      - name: Set up QEMU
+        if: matrix.docker != '' && matrix.use_cross
+        uses: docker/setup-qemu-action@v3
+
+      # ── Bundle tool binaries from Alpine ───────────────────────────────────
+      - name: Bundle tools
+        if: matrix.docker != ''
+        run: |
+          chmod +x ci/bundle-tools.sh
+          ci/bundle-tools.sh "${{ matrix.docker }}" "$PWD/bundled-tools"
+
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            # cross runs cargo inside Docker — mount bundled-tools and use container-internal paths
+            cat > Cross.toml << TOML
+          [target.${{ matrix.target }}]
+          volumes = ["$PWD/bundled-tools:/bundled-tools"]
+
+          [target.${{ matrix.target }}.env]
+          passthrough = [
+              "WIFL_WIMLIB_IMAGEX",
+              "WIFL_SFDISK",
+              "WIFL_MKNTFS",
+              "WIFL_MKFS_FAT",
+              "WIFL_PARTPROBE",
+              "WIFL_EFIBOOTMGR",
+              "WIFL_LSBLK",
+              "WIFL_FUSER",
+              "TAG"
+          ]
+          TOML
+            echo "WIFL_WIMLIB_IMAGEX=/bundled-tools/wimlib-imagex" >> "$GITHUB_ENV"
+            echo "WIFL_SFDISK=/bundled-tools/sfdisk"               >> "$GITHUB_ENV"
+            echo "WIFL_MKNTFS=/bundled-tools/mkntfs"               >> "$GITHUB_ENV"
+            echo "WIFL_MKFS_FAT=/bundled-tools/mkfs.fat"           >> "$GITHUB_ENV"
+            echo "WIFL_PARTPROBE=/bundled-tools/partprobe"         >> "$GITHUB_ENV"
+            echo "WIFL_EFIBOOTMGR=/bundled-tools/efibootmgr"       >> "$GITHUB_ENV"
+            echo "WIFL_LSBLK=/bundled-tools/lsblk"                 >> "$GITHUB_ENV"
+            echo "WIFL_FUSER=/bundled-tools/fuser"                  >> "$GITHUB_ENV"
+          else
+            echo "WIFL_WIMLIB_IMAGEX=$PWD/bundled-tools/wimlib-imagex" >> "$GITHUB_ENV"
+            echo "WIFL_SFDISK=$PWD/bundled-tools/sfdisk"               >> "$GITHUB_ENV"
+            echo "WIFL_MKNTFS=$PWD/bundled-tools/mkntfs"               >> "$GITHUB_ENV"
+            echo "WIFL_MKFS_FAT=$PWD/bundled-tools/mkfs.fat"           >> "$GITHUB_ENV"
+            echo "WIFL_PARTPROBE=$PWD/bundled-tools/partprobe"         >> "$GITHUB_ENV"
+            echo "WIFL_EFIBOOTMGR=$PWD/bundled-tools/efibootmgr"       >> "$GITHUB_ENV"
+            echo "WIFL_LSBLK=$PWD/bundled-tools/lsblk"                 >> "$GITHUB_ENV"
+            echo "WIFL_FUSER=$PWD/bundled-tools/fuser"                  >> "$GITHUB_ENV"
+          fi
+
+      - name: Install cross
         if: matrix.use_cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      # ── Bundle tool binaries (x86_64 and aarch64 Linux only) ──────────────
-      - name: Bundle tools
-        if: matrix.bundle
-        run: |
-          chmod +x ci/bundle-tools.sh
-          ci/bundle-tools.sh "${{ matrix.platform }}" "$PWD/bundled-tools"
-          echo "WIFL_WIMLIB_IMAGEX=$PWD/bundled-tools/wimlib-imagex" >> "$GITHUB_ENV"
-          echo "WIFL_SFDISK=$PWD/bundled-tools/sfdisk"               >> "$GITHUB_ENV"
-          echo "WIFL_MKNTFS=$PWD/bundled-tools/mkntfs"               >> "$GITHUB_ENV"
-          echo "WIFL_MKFS_FAT=$PWD/bundled-tools/mkfs.fat"           >> "$GITHUB_ENV"
-          echo "WIFL_PARTPROBE=$PWD/bundled-tools/partprobe"         >> "$GITHUB_ENV"
-          echo "WIFL_EFIBOOTMGR=$PWD/bundled-tools/efibootmgr"       >> "$GITHUB_ENV"
-          echo "WIFL_LSBLK=$PWD/bundled-tools/lsblk"                 >> "$GITHUB_ENV"
-          echo "WIFL_FUSER=$PWD/bundled-tools/fuser"                  >> "$GITHUB_ENV"
-
-      # ── Cache cargo registry ───────────────────────────────────────────────
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -92,7 +120,6 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('Cargo.toml') }}
           restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
 
-      # ── Build ──────────────────────────────────────────────────────────────
       - name: Build
         run: |
           if [ "${{ matrix.use_cross }}" = "true" ]; then
@@ -101,13 +128,11 @@ jobs:
             cargo build --release --target ${{ matrix.target }}
           fi
 
-      # ── Package ───────────────────────────────────────────────────────────
       - name: Package
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/wifl dist/wifl-${{ matrix.target }}
 
-      # ── Release ───────────────────────────────────────────────────────────
       - name: Release
         uses: softprops/action-gh-release@v2
         with:

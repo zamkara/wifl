@@ -4,6 +4,7 @@ mod download;
 mod install;
 mod select;
 mod tools;
+mod update;
 
 use std::path::PathBuf;
 use anyhow::{bail, Result};
@@ -12,10 +13,24 @@ use catalog::EsdFile;
 const ESD_DIR: &str = "/home/zam/Documents/ESDs";
 
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    match args.get(1).map(String::as_str) {
+        Some("update") => {
+            check_root()?;
+            return update::run();
+        }
+        Some("--version") | Some("-v") | Some("version") => {
+            println!("wifl {}", update::current_tag());
+            return Ok(());
+        }
+        Some(other) => bail!("unknown command: {}  (try: update, --version)", other),
+        None => {}
+    }
+
     check_root()?;
 
     println!();
-    println!("  \x1b[1mwifl\x1b[0m  windows image fetch + install");
+    println!("  \x1b[1mwifl\x1b[0m  windows image fetch + install  \x1b[90m{}\x1b[0m", update::current_tag());
     println!();
 
     info("initialising bundled tools…");
@@ -24,16 +39,11 @@ fn main() -> Result<()> {
     // ── 1. Windows version ─────────────────────────────────────────────────────
     info("fetching available releases…");
     let versions = api::fetch_versions()?;
+    if versions.is_empty() { bail!("no versions returned from server"); }
 
-    if versions.is_empty() {
-        bail!("no versions returned from server");
-    }
-
-    let ver_labels: Vec<String> = versions
-        .iter()
+    let ver_labels: Vec<String> = versions.iter()
         .map(|v| format!("Windows {}", v.number))
         .collect();
-
     let ver_idx = select::select("select Windows version", &ver_labels)?;
     let version = &versions[ver_idx];
 
@@ -41,76 +51,57 @@ fn main() -> Result<()> {
     if version.releases.is_empty() {
         bail!("no releases for Windows {}", version.number);
     }
-
-    let build_labels: Vec<String> = version
-        .releases
-        .iter()
+    let build_labels: Vec<String> = version.releases.iter()
         .map(|r| format!("build {}   ({})", r.build, fmt_date(&r.date)))
         .collect();
-
     let build_idx = select::select("select build", &build_labels)?;
     let build = &version.releases[build_idx].build;
 
     // ── 3. Fetch catalog ───────────────────────────────────────────────────────
     info(&format!("fetching catalog for build {}…", build));
     let catalog = api::fetch_catalog(build)?;
-
-    if catalog.is_empty() {
-        bail!("catalog is empty for build {}", build);
-    }
+    if catalog.is_empty() { bail!("catalog is empty for build {}", build); }
 
     // ── 4. Architecture ────────────────────────────────────────────────────────
-    let mut arches: Vec<String> = catalog
-        .iter()
+    let mut arches: Vec<String> = catalog.iter()
         .map(|f| f.architecture.clone())
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
     arches.sort();
-
     let arch_idx = select::select("select architecture", &arches)?;
     let arch = &arches[arch_idx];
 
     // ── 5. Language ────────────────────────────────────────────────────────────
-    let mut seen_langs = std::collections::HashSet::new();
-    let mut lang_files: Vec<&EsdFile> = catalog
-        .iter()
+    let mut seen = std::collections::HashSet::new();
+    let mut lang_files: Vec<&EsdFile> = catalog.iter()
         .filter(|f| &f.architecture == arch)
-        .filter(|f| seen_langs.insert(f.language_code.clone()))
+        .filter(|f| seen.insert(f.language_code.clone()))
         .collect();
     lang_files.sort_by(|a, b| a.language.cmp(&b.language));
-
-    let lang_labels: Vec<String> = lang_files
-        .iter()
+    let lang_labels: Vec<String> = lang_files.iter()
         .map(|f| format!("{}  ({})", f.language, f.language_code))
         .collect();
-
-    let lang_idx = select::select("select language", &lang_labels)?;
+    let lang_idx  = select::select("select language", &lang_labels)?;
     let lang_code = &lang_files[lang_idx].language_code;
 
     // ── 6. ESD variant ─────────────────────────────────────────────────────────
-    let candidates: Vec<&EsdFile> = catalog
-        .iter()
+    let candidates: Vec<&EsdFile> = catalog.iter()
         .filter(|f| &f.architecture == arch && &f.language_code == lang_code)
         .collect();
-
     let esd_file: &EsdFile = if candidates.len() == 1 {
         candidates[0]
     } else {
-        let esd_labels: Vec<String> = candidates
-            .iter()
+        let labels: Vec<String> = candidates.iter()
             .map(|f| format!("{}   {:.2} GiB", f.edition_label(), f.size_gb()))
             .collect();
-        let esd_idx = select::select("select edition group", &esd_labels)?;
-        candidates[esd_idx]
+        let idx = select::select("select edition group", &labels)?;
+        candidates[idx]
     };
 
     // ── 7. Disk ────────────────────────────────────────────────────────────────
     let disks = install::list_disks(&t)?;
-    if disks.is_empty() {
-        bail!("no block devices found");
-    }
-
+    if disks.is_empty() { bail!("no block devices found"); }
     let disk_labels: Vec<String> = disks.iter().map(|d| d.to_string()).collect();
     let disk_idx = select::select("select destination disk", &disk_labels)?;
     let disk = &disks[disk_idx];
@@ -119,13 +110,8 @@ fn main() -> Result<()> {
     println!();
     println!("  \x1b[33m·\x1b[0m  all data on /dev/{} will be destroyed", disk.name);
     println!();
-
-    let confirm_items = vec![
-        "yes — proceed".to_string(),
-        "no  — abort".to_string(),
-    ];
-    let confirm_idx = select::select("confirm?", &confirm_items)?;
-    if confirm_idx != 0 {
+    let confirm = vec!["yes — proceed".to_string(), "no  — abort".to_string()];
+    if select::select("confirm?", &confirm)? != 0 {
         bail!("aborted");
     }
 
@@ -133,21 +119,16 @@ fn main() -> Result<()> {
     println!();
     let esd_path = PathBuf::from(ESD_DIR).join(&esd_file.filename);
     std::fs::create_dir_all(ESD_DIR)?;
-
     download::ensure_esd(&esd_file.url, &esd_path, &esd_file.sha256, esd_file.size)?;
 
     // ── 10. Select image index ─────────────────────────────────────────────────
     println!();
     info("reading image catalogue from ESD…");
     let images = install::list_images(&t, &esd_path)?;
-
-    if images.is_empty() {
-        bail!("no installable images found in ESD");
-    }
-
+    if images.is_empty() { bail!("no installable images found in ESD"); }
     let img_labels: Vec<String> = images.iter().map(|i| i.to_string()).collect();
     let img_idx = select::select("select edition to install", &img_labels)?;
-    let image = &images[img_idx];
+    let image   = &images[img_idx];
 
     // ── 11. Install ────────────────────────────────────────────────────────────
     println!();
@@ -158,7 +139,6 @@ fn main() -> Result<()> {
     println!();
     println!("  \x1b[33m·\x1b[0m  first boot may trigger Startup Repair — expected, let it complete");
     println!();
-
     Ok(())
 }
 
