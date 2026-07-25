@@ -16,20 +16,21 @@ jobs:
       matrix:
         include:
           # ── Linux x86_64 ─────────────────────────────────────────────────────
-          - target:   x86_64-unknown-linux-musl
-            os:       ubuntu-latest
-            platform: linux/amd64
+          - target:    x86_64-unknown-linux-musl
+            os:        ubuntu-latest
+            platform:  linux/amd64
+            bundle:    true
 
           # ── Linux ARM64 ───────────────────────────────────────────────────────
-          - target:   aarch64-unknown-linux-musl
-            os:       ubuntu-24.04-arm
-            platform: linux/arm64
+          - target:    aarch64-unknown-linux-musl
+            os:        ubuntu-24.04-arm
+            platform:  linux/arm64
+            bundle:    true
 
-          # ── Linux ARMv7 ───────────────────────────────────────────────────────
-          - target:   armv7-unknown-linux-musleabihf
-            os:       ubuntu-latest
-            platform: linux/arm/v7
-            qemu:     true
+          # ── Linux ARMv7 — cross (ring needs ARM toolchain; tools via PATH) ────
+          - target:    armv7-unknown-linux-musleabihf
+            os:        ubuntu-latest
+            use_cross: true
 
           # ── macOS Intel ───────────────────────────────────────────────────────
           - target: x86_64-apple-darwin
@@ -55,19 +56,19 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install musl tools (Linux)
-        if: runner.os == 'Linux'
+      - name: Install musl tools (Linux native)
+        if: runner.os == 'Linux' && !matrix.use_cross
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y musl-tools
 
-      - name: Set up QEMU (ARMv7)
-        if: matrix.qemu
-        uses: docker/setup-qemu-action@v3
+      - name: Install cross (ARMv7)
+        if: matrix.use_cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
 
-      # ── Bundle tool binaries (Linux only) ──────────────────────────────────
+      # ── Bundle tool binaries (x86_64 and aarch64 Linux only) ──────────────
       - name: Bundle tools
-        if: runner.os == 'Linux'
+        if: matrix.bundle
         run: |
           chmod +x ci/bundle-tools.sh
           ci/bundle-tools.sh "${{ matrix.platform }}" "$PWD/bundled-tools"
@@ -93,7 +94,12 @@ jobs:
 
       # ── Build ──────────────────────────────────────────────────────────────
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
 
       # ── Package ───────────────────────────────────────────────────────────
       - name: Package
