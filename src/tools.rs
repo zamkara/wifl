@@ -66,9 +66,28 @@ fn slot(dir: &Path, name: &str, data: &[u8], hint: &str) -> Result<PathBuf> {
         #[cfg(unix)]
         fs::set_permissions(&p, fs::Permissions::from_mode(0o755))
             .with_context(|| format!("chmod {}", name))?;
-        return Ok(p);
+        // If the bundled binary's ELF interpreter is absent on this host (e.g. musl
+        // ld not installed), fall back to a system-provided copy from PATH.
+        if can_exec(&p) {
+            return Ok(p);
+        }
     }
     which_or_bail(name, hint)
+}
+
+fn can_exec(p: &Path) -> bool {
+    use std::process::{Command, Stdio};
+    match Command::new(p)
+        .arg("--help")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(mut child) => { let _ = child.kill(); true }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => true,
+    }
 }
 
 fn which_or_bail(name: &str, hint: &str) -> Result<PathBuf> {
