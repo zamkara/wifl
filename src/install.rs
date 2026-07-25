@@ -219,9 +219,17 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
         efi_boot.join("bootx64.efi").to_str().unwrap(),
     ])?;
 
-    let bcd = boot_src.join("BCD");
-    if bcd.exists() {
+    // BCD location varies by Windows version: try root of Boot/, then DVD/EFI/
+    let bcd = [
+        boot_src.join("BCD"),
+        boot_src.join("DVD/EFI/BCD"),
+    ]
+    .into_iter()
+    .find(|p| p.exists());
+    if let Some(bcd) = bcd {
         run_sys("cp", &[bcd.to_str().unwrap(), efi_ms_boot.join("BCD").to_str().unwrap()])?;
+    } else {
+        bail!("BCD not found in applied image — cannot set up boot");
     }
     for dir in ["Fonts", "Resources"] {
         let src = boot_src.join(dir);
