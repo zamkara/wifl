@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use anyhow::{bail, Result};
 use catalog::EsdFile;
 
-const ESD_DIR: &str = "/home/zam/Documents/ESDs";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -117,8 +116,9 @@ fn main() -> Result<()> {
 
     // ── 9. Download ESD ────────────────────────────────────────────────────────
     println!();
-    let esd_path = PathBuf::from(ESD_DIR).join(&esd_file.filename);
-    std::fs::create_dir_all(ESD_DIR)?;
+    let esd_dir = esd_dir()?;
+    let esd_path = esd_dir.join(&esd_file.filename);
+    std::fs::create_dir_all(&esd_dir)?;
     download::ensure_esd(&esd_file.url, &esd_path, &esd_file.sha256, esd_file.size)?;
 
     // ── 10. Select image index ─────────────────────────────────────────────────
@@ -140,6 +140,11 @@ fn main() -> Result<()> {
     println!("  \x1b[33m·\x1b[0m  first boot may trigger Startup Repair — expected, let it complete");
     println!();
     Ok(())
+}
+
+fn esd_dir() -> Result<PathBuf> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    Ok(PathBuf::from(home).join("Downloads").join("wifl"))
 }
 
 fn check_root() -> Result<()> {
