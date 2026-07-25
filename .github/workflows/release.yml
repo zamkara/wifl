@@ -23,11 +23,11 @@ jobs:
             os:     ubuntu-24.04-arm
             docker: linux/arm64
 
-          # armv7: bundle tools via QEMU Alpine, compile via cross
-          - target:     armv7-unknown-linux-musleabihf
-            os:         ubuntu-latest
-            docker:     linux/arm/v7
-            use_cross:  true
+          # armv7: QEMU collects arm/v7 Alpine tools; zig cross-compiles Rust
+          - target:   armv7-unknown-linux-musleabihf
+            os:       ubuntu-latest
+            docker:   linux/arm/v7
+            use_zig:  true
 
           - target: x86_64-apple-darwin
             os:     macos-latest
@@ -52,63 +52,35 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install musl tools
-        if: runner.os == 'Linux' && !matrix.use_cross
+        if: runner.os == 'Linux' && !matrix.use_zig
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y musl-tools
 
       - name: Set up QEMU
-        if: matrix.docker != '' && matrix.use_cross
+        if: matrix.docker != '' && matrix.use_zig
         uses: docker/setup-qemu-action@v3
 
-      # ── Bundle tool binaries from Alpine ───────────────────────────────────
+      # ── Bundle tool binaries from Alpine ──────────────────────────────────
       - name: Bundle tools
         if: matrix.docker != ''
         run: |
           chmod +x ci/bundle-tools.sh
           ci/bundle-tools.sh "${{ matrix.docker }}" "$PWD/bundled-tools"
+          echo "WIFL_WIMLIB_IMAGEX=$PWD/bundled-tools/wimlib-imagex" >> "$GITHUB_ENV"
+          echo "WIFL_SFDISK=$PWD/bundled-tools/sfdisk"               >> "$GITHUB_ENV"
+          echo "WIFL_MKNTFS=$PWD/bundled-tools/mkntfs"               >> "$GITHUB_ENV"
+          echo "WIFL_MKFS_FAT=$PWD/bundled-tools/mkfs.fat"           >> "$GITHUB_ENV"
+          echo "WIFL_PARTPROBE=$PWD/bundled-tools/partprobe"         >> "$GITHUB_ENV"
+          echo "WIFL_EFIBOOTMGR=$PWD/bundled-tools/efibootmgr"       >> "$GITHUB_ENV"
+          echo "WIFL_LSBLK=$PWD/bundled-tools/lsblk"                 >> "$GITHUB_ENV"
+          echo "WIFL_FUSER=$PWD/bundled-tools/fuser"                  >> "$GITHUB_ENV"
 
-          if [ "${{ matrix.use_cross }}" = "true" ]; then
-            # cross runs cargo inside Docker — mount bundled-tools and use container-internal paths
-            cat > Cross.toml << TOML
-          [target.${{ matrix.target }}]
-          volumes = ["$PWD/bundled-tools:/bundled-tools"]
-
-          [target.${{ matrix.target }}.env]
-          passthrough = [
-              "WIFL_WIMLIB_IMAGEX",
-              "WIFL_SFDISK",
-              "WIFL_MKNTFS",
-              "WIFL_MKFS_FAT",
-              "WIFL_PARTPROBE",
-              "WIFL_EFIBOOTMGR",
-              "WIFL_LSBLK",
-              "WIFL_FUSER",
-              "TAG"
-          ]
-          TOML
-            echo "WIFL_WIMLIB_IMAGEX=/bundled-tools/wimlib-imagex" >> "$GITHUB_ENV"
-            echo "WIFL_SFDISK=/bundled-tools/sfdisk"               >> "$GITHUB_ENV"
-            echo "WIFL_MKNTFS=/bundled-tools/mkntfs"               >> "$GITHUB_ENV"
-            echo "WIFL_MKFS_FAT=/bundled-tools/mkfs.fat"           >> "$GITHUB_ENV"
-            echo "WIFL_PARTPROBE=/bundled-tools/partprobe"         >> "$GITHUB_ENV"
-            echo "WIFL_EFIBOOTMGR=/bundled-tools/efibootmgr"       >> "$GITHUB_ENV"
-            echo "WIFL_LSBLK=/bundled-tools/lsblk"                 >> "$GITHUB_ENV"
-            echo "WIFL_FUSER=/bundled-tools/fuser"                  >> "$GITHUB_ENV"
-          else
-            echo "WIFL_WIMLIB_IMAGEX=$PWD/bundled-tools/wimlib-imagex" >> "$GITHUB_ENV"
-            echo "WIFL_SFDISK=$PWD/bundled-tools/sfdisk"               >> "$GITHUB_ENV"
-            echo "WIFL_MKNTFS=$PWD/bundled-tools/mkntfs"               >> "$GITHUB_ENV"
-            echo "WIFL_MKFS_FAT=$PWD/bundled-tools/mkfs.fat"           >> "$GITHUB_ENV"
-            echo "WIFL_PARTPROBE=$PWD/bundled-tools/partprobe"         >> "$GITHUB_ENV"
-            echo "WIFL_EFIBOOTMGR=$PWD/bundled-tools/efibootmgr"       >> "$GITHUB_ENV"
-            echo "WIFL_LSBLK=$PWD/bundled-tools/lsblk"                 >> "$GITHUB_ENV"
-            echo "WIFL_FUSER=$PWD/bundled-tools/fuser"                  >> "$GITHUB_ENV"
-          fi
-
-      - name: Install cross
-        if: matrix.use_cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Install zig + cargo-zigbuild
+        if: matrix.use_zig
+        run: |
+          pip install ziglang --quiet
+          cargo install cargo-zigbuild --quiet 2>&1 | tail -1
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -122,8 +94,8 @@ jobs:
 
       - name: Build
         run: |
-          if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }}
+          if [ "${{ matrix.use_zig }}" = "true" ]; then
+            cargo zigbuild --release --target ${{ matrix.target }}
           else
             cargo build --release --target ${{ matrix.target }}
           fi
