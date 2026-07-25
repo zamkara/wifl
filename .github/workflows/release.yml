@@ -19,19 +19,16 @@ jobs:
           - target:   x86_64-unknown-linux-musl
             os:       ubuntu-latest
             platform: linux/amd64
-            wimlib:   https://wimlib.net/downloads/wimlib-1.14.4-x86_64-linux-bin.tar.gz
 
           # ── Linux ARM64 ───────────────────────────────────────────────────────
           - target:   aarch64-unknown-linux-musl
             os:       ubuntu-24.04-arm
             platform: linux/arm64
-            wimlib:   ""   # pulled from Alpine
 
           # ── Linux ARMv7 ───────────────────────────────────────────────────────
           - target:   armv7-unknown-linux-musleabihf
             os:       ubuntu-latest
             platform: linux/arm/v7
-            wimlib:   ""
             qemu:     true
 
           # ── macOS Intel ───────────────────────────────────────────────────────
@@ -73,7 +70,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           chmod +x ci/bundle-tools.sh
-          ci/bundle-tools.sh "${{ matrix.platform }}" "${{ matrix.wimlib }}" "$PWD/bundled-tools"
+          ci/bundle-tools.sh "${{ matrix.platform }}" "$PWD/bundled-tools"
           echo "WIFL_WIMLIB_IMAGEX=$PWD/bundled-tools/wimlib-imagex" >> "$GITHUB_ENV"
           echo "WIFL_SGDISK=$PWD/bundled-tools/sgdisk"               >> "$GITHUB_ENV"
           echo "WIFL_MKNTFS=$PWD/bundled-tools/mkntfs"               >> "$GITHUB_ENV"
