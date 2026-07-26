@@ -191,51 +191,51 @@ pub fn create_bcd(
         \r\n\
         [BCD00000000\\Objects]\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BM}}}]\r\n\
+        [Objects\\{{{BM}}}]\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BM}}}\\Description]\r\n\
+        [Objects\\{{{BM}}}\\Description]\r\n\
         \"Type\"=dword:10100002\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BM}}}\\Elements]\r\n\
+        [Objects\\{{{BM}}}\\Elements]\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BM}}}\\Elements\\11000001]\r\n\
+        [Objects\\{{{BM}}}\\Elements\\11000001]\r\n\
         \"Element\"=hex:{dev}\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BM}}}\\Elements\\14000006]\r\n\
+        [Objects\\{{{BM}}}\\Elements\\14000006]\r\n\
         \"Element\"=hex(7):{bm_inherit}\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BM}}}\\Elements\\23000003]\r\n\
+        [Objects\\{{{BM}}}\\Elements\\23000003]\r\n\
         \"Element\"=hex:{ldr}\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BM}}}\\Elements\\24000001]\r\n\
+        [Objects\\{{{BM}}}\\Elements\\24000001]\r\n\
         \"Element\"=hex(7):{ldr_list}\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BM}}}\\Elements\\25000004]\r\n\
+        [Objects\\{{{BM}}}\\Elements\\25000004]\r\n\
         \"Element\"=hex(b):1e,00,00,00,00,00,00,00\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BL}}}]\r\n\
+        [Objects\\{{{BL}}}]\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BL}}}\\Description]\r\n\
+        [Objects\\{{{BL}}}\\Description]\r\n\
         \"Type\"=dword:10200003\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BL}}}\\Elements]\r\n\
+        [Objects\\{{{BL}}}\\Elements]\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BL}}}\\Elements\\11000001]\r\n\
+        [Objects\\{{{BL}}}\\Elements\\11000001]\r\n\
         \"Element\"=hex:{dev}\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BL}}}\\Elements\\12000002]\r\n\
+        [Objects\\{{{BL}}}\\Elements\\12000002]\r\n\
         \"Element\"=hex:{winload}\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BL}}}\\Elements\\12000004]\r\n\
+        [Objects\\{{{BL}}}\\Elements\\12000004]\r\n\
         \"Element\"=hex:{desc}\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BL}}}\\Elements\\14000006]\r\n\
+        [Objects\\{{{BL}}}\\Elements\\14000006]\r\n\
         \"Element\"=hex(7):{bl_inherit}\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BL}}}\\Elements\\21000001]\r\n\
+        [Objects\\{{{BL}}}\\Elements\\21000001]\r\n\
         \"Element\"=hex:{dev}\r\n\
         \r\n\
-        [BCD00000000\\Objects\\{{{BL}}}\\Elements\\22000002]\r\n\
+        [Objects\\{{{BL}}}\\Elements\\22000002]\r\n\
         \"Element\"=hex:{sysroot}\r\n\
         ",
         BM         = BOOT_MGR_GUID,
