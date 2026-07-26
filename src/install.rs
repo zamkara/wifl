@@ -104,7 +104,7 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32, arc
     let mnt_win        = "/mnt/windows";
 
     // Check requirements early so we don't waste time if something is missing
-    bcd::require_hivexregedit()?;
+    bcd::require_hivex_perl()?;
 
     let efi_boot_file = bcd::efi_boot_filename(arch);
     let uefi_ntfs_img = Tools::uefi_ntfs_img();
