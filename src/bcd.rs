@@ -172,10 +172,10 @@ pub fn create_bcd(
     // Notes:
     //  - Boot Manager (9dea862c-...) type 0x10100002
     //    · 11000001: device (where bootmgfw.efi lives — same NTFS partition)
+    //    · 14000006: inherit list → globalsettings GUID (REG_MULTI_SZ)
     //    · 23000003: default object (GUID of boot loader, 16 bytes binary)
-    //    · 24000001: display order (same GUID, 16 bytes binary)
+    //    · 24000001: display order — REG_MULTI_SZ of GUIDs (hex(7):), NOT binary
     //    · 25000004: timeout in seconds (QWORD = 30s)
-    //    · 14000006 is NOT written here — template's inherit list is preserved
     //
     //  - Windows Boot Loader (b012b84d-...) type 0x10200003
     //    · 11000001: device (NTFS partition)
@@ -184,6 +184,8 @@ pub fn create_bcd(
     //    · 14000006: inherit list → globalsettings GUID (REG_MULTI_SZ)
     //    · 21000001: OS device (same NTFS partition)
     //    · 22000002: system root \Windows (UTF-16LE binary)
+    let ldr_multi_sz = multi_sz_one_guid(BOOT_LDR_GUID);
+
     let reg = format!(
         "Windows Registry Editor Version 5.00\r\n\
         \r\n\
@@ -193,11 +195,14 @@ pub fn create_bcd(
         [Objects\\{{{BM}}}\\Elements\\11000001]\r\n\
         \"Element\"=hex:{dev}\r\n\
         \r\n\
+        [Objects\\{{{BM}}}\\Elements\\14000006]\r\n\
+        \"Element\"=hex(7):{bm_inherit}\r\n\
+        \r\n\
         [Objects\\{{{BM}}}\\Elements\\23000003]\r\n\
         \"Element\"=hex:{ldr}\r\n\
         \r\n\
         [Objects\\{{{BM}}}\\Elements\\24000001]\r\n\
-        \"Element\"=hex:{ldr}\r\n\
+        \"Element\"=hex(7):{ldr_list}\r\n\
         \r\n\
         [Objects\\{{{BM}}}\\Elements\\25000004]\r\n\
         \"Element\"=hex(b):1e,00,00,00,00,00,00,00\r\n\
@@ -215,7 +220,7 @@ pub fn create_bcd(
         \"Element\"=hex:{desc}\r\n\
         \r\n\
         [Objects\\{{{BL}}}\\Elements\\14000006]\r\n\
-        \"Element\"=hex(7):{inherit}\r\n\
+        \"Element\"=hex(7):{bl_inherit}\r\n\
         \r\n\
         [Objects\\{{{BL}}}\\Elements\\21000001]\r\n\
         \"Element\"=hex:{dev}\r\n\
@@ -223,14 +228,16 @@ pub fn create_bcd(
         [Objects\\{{{BL}}}\\Elements\\22000002]\r\n\
         \"Element\"=hex:{sysroot}\r\n\
         ",
-        BM      = BOOT_MGR_GUID,
-        BL      = BOOT_LDR_GUID,
-        dev     = dev_hex,
-        ldr     = ldr_guid_bytes,
-        winload = path_hex(r"\Windows\System32\winload.efi"),
-        desc    = path_hex("Windows 11"),
-        inherit = global_inherit,
-        sysroot = path_hex(r"\Windows"),
+        BM         = BOOT_MGR_GUID,
+        BL         = BOOT_LDR_GUID,
+        dev        = dev_hex,
+        ldr        = ldr_guid_bytes,
+        ldr_list   = ldr_multi_sz,
+        bm_inherit = global_inherit,
+        winload    = path_hex(r"\Windows\System32\winload.efi"),
+        desc       = path_hex("Windows 11"),
+        bl_inherit = global_inherit,
+        sysroot    = path_hex(r"\Windows"),
     );
 
     // Copy BCD-Template → destination (this is the hive we will merge into)
