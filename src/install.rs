@@ -1,5 +1,6 @@
 use std::{
     ffi::OsStr,
+    io::BufRead,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::Duration,
@@ -95,7 +96,7 @@ fn part(disk: &str, n: u8) -> String {
     }
 }
 
-pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32, arch: &str, ui: &Tui) -> Result<()> {
+pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32, arch: &str, ui: &mut Tui) -> Result<()> {
     let disk_dev      = format!("/dev/{}", disk.name);
     let uefi_ntfs_part = part(&disk.name, 1);  // tiny FAT12 — uefi-ntfs bridge
     let msr_part       = part(&disk.name, 2);  // Microsoft Reserved
@@ -140,7 +141,7 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32, arc
             .args(["--label", "gpt", "--wipe", "always", "--wipe-partitions", "always", &disk_dev])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::null())
             .spawn()
             .context("spawn sfdisk")?;
         if let Some(mut stdin) = child.stdin.take() {
@@ -148,7 +149,7 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32, arc
                 b"name=\"UEFI:NTFS\",          size=2MiB,  type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B\n\
                   name=\"Microsoft Reserved\",  size=16MiB, type=E3C9E316-0B5C-4DB8-817D-F92DF00215AE\n\
                   name=\"Windows\",                         type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n",
-            )?;
+            ).context("write sfdisk stdin")?;
         }
         if !child.wait().context("sfdisk wait")?.success() {
             bail!("sfdisk failed");
@@ -203,12 +204,12 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32, arc
         "applying image [{}] to {}  (10–20 min — do not interrupt)",
         image_index, win_part
     ));
-    run_inherit(&tools.wimlib, &[
+    run_wimlib(&tools.wimlib, &[
         "apply",
         esd.to_str().unwrap(),
         &image_index.to_string(),
         &win_part,
-    ])?;
+    ], ui)?;
 
     // ── mount Windows NTFS ────────────────────────────────────────────────────
     ui.step("mounting Windows partition");
@@ -359,13 +360,39 @@ fn run(prog: impl AsRef<OsStr>, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn run_inherit(prog: impl AsRef<OsStr>, args: &[&str]) -> Result<()> {
+/// Run wimlib with piped stdout+stderr, feeding each line to the TUI log.
+fn run_wimlib(prog: impl AsRef<OsStr>, args: &[&str], ui: &mut Tui) -> Result<()> {
+    use std::sync::mpsc;
+
     let prog = prog.as_ref();
-    let status = Command::new(prog)
+    let mut child = Command::new(prog)
         .args(args)
-        .status()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .with_context(|| format!("spawn {:?}", prog))?;
-    if !status.success() {
+
+    let stdout_pipe = child.stdout.take().unwrap();
+    let stderr_pipe = child.stderr.take().unwrap();
+    let (tx, rx) = mpsc::channel::<String>();
+    let tx2 = tx.clone();
+
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stdout_pipe).lines() {
+            if let Ok(l) = line { let _ = tx.send(l); }
+        }
+    });
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stderr_pipe).lines() {
+            if let Ok(l) = line { let _ = tx2.send(l); }
+        }
+    });
+
+    while let Ok(line) = rx.recv() {
+        ui.child_line(&line);
+    }
+
+    if !child.wait().with_context(|| format!("{:?} wait", prog))?.success() {
         bail!("{:?} failed", prog);
     }
     Ok(())

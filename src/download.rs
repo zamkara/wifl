@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 use crate::tui::Tui;
 
-pub fn ensure_esd(url: &str, dest: &Path, expected_sha256: &str, size: u64, ui: &Tui) -> Result<()> {
+pub fn ensure_esd(url: &str, dest: &Path, expected_sha256: &str, size: u64, ui: &mut Tui) -> Result<()> {
     if dest.exists() {
         ui.step("verifying cached ESD…");
         if verify(dest, expected_sha256)? {

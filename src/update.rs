@@ -10,12 +10,18 @@ const API: &str = "https://api.github.com/repos/zamkara/wifl/releases/latest";
 
 pub fn current_tag() -> &'static str { CURRENT_TAG }
 
+macro_rules! info { ($($a:tt)*) => { println!("  \x1b[90m·\x1b[0m  {}", format!($($a)*)) }; }
+macro_rules! ok   { ($($a:tt)*) => { println!("  \x1b[32m✓\x1b[0m  {}", format!($($a)*)) }; }
+macro_rules! warn { ($($a:tt)*) => { println!("  \x1b[33m·\x1b[0m  {}", format!($($a)*)) }; }
+
 pub fn run() -> Result<()> {
     println!();
-    println!("  · current   {}", CURRENT_TAG);
+    println!("  \x1b[1mwifl update\x1b[0m");
+    println!();
+    info!("current   {}", CURRENT_TAG);
 
     if CURRENT_TAG == "dev" {
-        println!("  \x1b[33m·\x1b[0m  dev build — update not available");
+        warn!("dev build — update not available");
         return Ok(());
     }
 
@@ -35,10 +41,11 @@ pub fn run() -> Result<()> {
     let latest_tag = json_str(&body, "tag_name")
         .context("parse tag_name from GitHub response")?;
 
-    println!("  · latest    {}", latest_tag);
+    info!("latest    {}", latest_tag);
 
     if latest_tag == CURRENT_TAG {
-        println!("  \x1b[32m·\x1b[0m  already up to date");
+        ok!("already up to date");
+        println!();
         return Ok(());
     }
 
@@ -46,7 +53,7 @@ pub fn run() -> Result<()> {
     let url = asset_url(&body, &asset_name)
         .with_context(|| format!("asset '{}' not found in release {}", asset_name, latest_tag))?;
 
-    println!("  \x1b[32m·\x1b[0m  downloading {}…", latest_tag);
+    info!("downloading {}…", latest_tag);
 
     let current_exe = std::env::current_exe().context("resolve current executable")?;
     let tmp = current_exe.with_extension("_wifl_update");
@@ -71,7 +78,7 @@ pub fn run() -> Result<()> {
 
     std::fs::rename(&tmp, &current_exe).context("replace binary")?;
 
-    println!("  \x1b[32m·\x1b[0m  updated to {}  —  restart to apply", latest_tag);
+    ok!("updated to {}  —  restart to apply", latest_tag);
     println!();
     Ok(())
 }

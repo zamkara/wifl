@@ -54,18 +54,6 @@ fn main() -> Result<()> {
     let build = &version.releases[build_idx].build;
 
     // ── 3. Fetch catalog ───────────────────────────────────────────────────────
-    // The network request happens while still in alt-screen; just draw a hint.
-    {
-        use std::io::Write as _;
-        use crossterm::{cursor, queue, style::{Print, SetForegroundColor, Color, ResetColor},
-                        terminal::ClearType};
-        let mut stdout = std::io::stdout();
-        let _ = queue!(stdout, cursor::MoveTo(4, 10),
-                       crossterm::terminal::Clear(ClearType::CurrentLine),
-                       SetForegroundColor(Color::DarkGrey), Print("fetching catalog…"), ResetColor);
-        let _ = stdout.flush();
-    }
-
     let catalog = api::fetch_catalog(build)?;
     if catalog.is_empty() { bail!("catalog is empty for build {}", build); }
 
@@ -123,52 +111,32 @@ fn main() -> Result<()> {
         bail!("aborted");
     }
 
-    // ── Switch to normal terminal for the rest ─────────────────────────────────
+    // ── Switch to working mode (stays in alternate screen) ─────────────────────
     ui.enter_working_mode()?;
 
     // ── 9. Download ESD ────────────────────────────────────────────────────────
     let esd_dir = esd_dir()?;
-    ui.info(&format!("ESD directory: {}", esd_dir.display()));
     let esd_path = esd_dir.join(&esd_file.filename);
     std::fs::create_dir_all(&esd_dir)
         .with_context(|| format!("create ESD directory {}", esd_dir.display()))?;
-    download::ensure_esd(&esd_file.url, &esd_path, &esd_file.sha256, esd_file.size, &ui)
+    download::ensure_esd(&esd_file.url, &esd_path, &esd_file.sha256, esd_file.size, &mut ui)
         .with_context(|| format!("download/verify {}", esd_path.display()))?;
 
     // ── 10. Select image index ─────────────────────────────────────────────────
-    // Back to raw+alt screen for the image selection menu.
-    let image_idx = {
-        ui.info("reading image catalogue from ESD…");
-        let images = install::list_images(&t, &esd_path)
-            .with_context(|| format!("list images in {}", esd_path.display()))?;
-        if images.is_empty() { bail!("no installable images found in ESD"); }
+    ui.info("reading image catalogue from ESD…");
+    let images = install::list_images(&t, &esd_path)
+        .with_context(|| format!("list images in {}", esd_path.display()))?;
+    if images.is_empty() { bail!("no installable images found in ESD"); }
 
-        // Re-enter alt screen for this one last menu
-        let mut ui2 = Tui::new(update::current_tag())?;
-        // Copy over selections so far so the context is visible
-        for (l, v) in &ui.selections {
-            ui2.selections.push((l.clone(), v.clone()));
-        }
-        let img_labels: Vec<String> = images.iter().map(|i| i.to_string()).collect();
-        let idx = ui2.select("Select edition to install", &img_labels)?;
-        // Copy last selection back
-        if let Some(last) = ui2.selections.last() {
-            ui.selections.push(last.clone());
-        }
-        ui2.enter_working_mode()?;
-        let image = &images[idx];
-        image.index
-    };
+    let img_labels: Vec<String> = images.iter().map(|i| i.to_string()).collect();
+    let img_idx = ui.select_in_working("Select edition to install", &img_labels)?;
+    let image_idx = images[img_idx].index;
 
     // ── 11. Install ────────────────────────────────────────────────────────────
-    install::install(&t, disk, &esd_path, image_idx, arch, &ui)
+    install::install(&t, disk, &esd_path, image_idx, arch, &mut ui)
         .with_context(|| format!("install to /dev/{}", disk.name))?;
 
-    println!();
-    println!("  \x1b[1mdone\x1b[0m  reboot to continue Windows setup");
-    println!();
-    println!("  \x1b[33m·\x1b[0m  first boot may take longer — Windows finalising setup");
-    println!();
+    ui.step_ok("done — reboot to continue Windows setup");
     Ok(())
 }
 
