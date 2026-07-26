@@ -6,8 +6,15 @@ const BOOT_MGR_GUID:    &str = "9dea862c-5cdd-4e70-acc1-f32b344d4795";
 const BOOT_LDR_GUID:    &str = "b012b84d-c47c-4ed5-b722-c0c42163e569";
 const GLOBAL_SETTINGS:  &str = "6efb52bf-1766-41db-a6b3-0ee5eff72bd7";
 
-/// ARM64 UEFI boot filename — uefi-ntfs loads this from the NTFS partition.
-pub const EFI_BOOT_FILENAME: &str = "bootaa64.efi";
+/// Return the UEFI default boot filename for the given architecture.
+/// uefi-ntfs looks for this file on the NTFS partition.
+pub fn efi_boot_filename(arch: &str) -> &'static str {
+    match arch {
+        "arm64" => "bootaa64.efi",
+        "x86"   => "bootia32.efi",
+        _       => "bootx64.efi",   // x64, default
+    }
+}
 
 /// Parse a GUID string into Windows mixed-endian bytes (bytes_le):
 /// first 3 components little-endian, last 2 big-endian.

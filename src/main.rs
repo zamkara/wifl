@@ -161,7 +161,7 @@ fn main() -> Result<()> {
     };
 
     // ── 11. Install ────────────────────────────────────────────────────────────
-    install::install(&t, disk, &esd_path, image_idx, &ui)
+    install::install(&t, disk, &esd_path, image_idx, arch, &ui)
         .with_context(|| format!("install to /dev/{}", disk.name))?;
 
     println!();

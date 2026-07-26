@@ -95,7 +95,7 @@ fn part(disk: &str, n: u8) -> String {
     }
 }
 
-pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32, ui: &Tui) -> Result<()> {
+pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32, arch: &str, ui: &Tui) -> Result<()> {
     let disk_dev      = format!("/dev/{}", disk.name);
     let uefi_ntfs_part = part(&disk.name, 1);  // tiny FAT12 — uefi-ntfs bridge
     let msr_part       = part(&disk.name, 2);  // Microsoft Reserved
@@ -105,6 +105,7 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32, ui:
     // Check requirements early so we don't waste time if something is missing
     bcd::require_hivexregedit()?;
 
+    let efi_boot_file = bcd::efi_boot_filename(arch);
     let uefi_ntfs_img = Tools::uefi_ntfs_img();
     if uefi_ntfs_img.is_empty() {
         bail!(
@@ -260,10 +261,10 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32, ui:
         bail!("bootmgfw.efi not found in Windows/Boot/EFI/");
     }
 
-    // EFI\Boot\bootaa64.efi — uefi-ntfs chain-loads this from the NTFS partition
+    // EFI\Boot\boot{arch}.efi — uefi-ntfs chain-loads this from the NTFS partition
     run_sys("cp", &[
         bootmgfw.to_str().unwrap(),
-        efi_boot.join(bcd::EFI_BOOT_FILENAME).to_str().unwrap(),
+        efi_boot.join(efi_boot_file).to_str().unwrap(),
     ])?;
 
     // EFI\Microsoft\Boot\bootmgfw.efi — canonical Windows Boot Manager location
@@ -328,7 +329,7 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32, ui:
     } else {
         ui.info(&format!(
             "efibootmgr failed — UEFI should auto-discover EFI\\Boot\\{}",
-            bcd::EFI_BOOT_FILENAME
+            efi_boot_file
         ));
     }
 
