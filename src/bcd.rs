@@ -189,6 +189,8 @@ pub fn create_bcd(
     let reg = format!(
         "Windows Registry Editor Version 5.00\r\n\
         \r\n\
+        [BCD00000000\\Objects]\r\n\
+        \r\n\
         [BCD00000000\\Objects\\{{{BM}}}]\r\n\
         \r\n\
         [BCD00000000\\Objects\\{{{BM}}}\\Description]\r\n\
