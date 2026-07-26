@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 use anyhow::{bail, Context, Result};
-use crate::tools::Tools;
+use crate::{bcd, tools::Tools};
 
 #[derive(Debug, Clone)]
 pub struct DiskInfo {
@@ -96,25 +96,43 @@ fn part(disk: &str, n: u8) -> String {
 }
 
 pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> Result<()> {
-    let disk_dev = format!("/dev/{}", disk.name);
-    let efi_part = part(&disk.name, 1);
-    let msr_part = part(&disk.name, 2);
-    let win_part = part(&disk.name, 3);
-    let mnt_win  = "/mnt/windows";
-    let mnt_efi  = "/mnt/winefi";
+    let disk_dev      = format!("/dev/{}", disk.name);
+    let uefi_ntfs_part = part(&disk.name, 1);  // tiny FAT12 — uefi-ntfs bridge
+    let msr_part       = part(&disk.name, 2);  // Microsoft Reserved
+    let win_part       = part(&disk.name, 3);  // Windows NTFS (boot files + OS)
+    let mnt_win        = "/mnt/windows";
+
+    // Check requirements early so we don't waste time if something is missing
+    bcd::require_hivexregedit()?;
+
+    let uefi_ntfs_img = Tools::uefi_ntfs_img();
+    if uefi_ntfs_img.is_empty() {
+        bail!(
+            "uefi-ntfs.img not bundled in this build.\n  \
+             Rebuild with: WIFL_UEFI_NTFS=/path/to/uefi-ntfs.img cargo build\n  \
+             Get the image from: https://github.com/pbatard/uefi-ntfs/releases"
+        );
+    }
 
     // ── cleanup ───────────────────────────────────────────────────────────────
     step("clearing existing mounts");
     let _ = Command::new("umount").args(["-Rl", mnt_win]).output();
-    let _ = Command::new("umount").args(["-Rl", mnt_efi]).output();
-    for dev in [&disk_dev, &efi_part, &msr_part, &win_part] {
+    for dev in [&disk_dev, &uefi_ntfs_part, &msr_part, &win_part] {
         let _ = Command::new(&tools.fuser).args(["-km", dev.as_str()]).output();
         let _ = Command::new("umount").args(["-Rl", dev.as_str()]).output();
         let _ = Command::new("swapoff").arg(dev).output();
     }
 
     // ── partition ─────────────────────────────────────────────────────────────
-    step("partitioning disk  (GPT · UEFI)");
+    // Layout:
+    //   sda1  2 MiB  EFI System — uefi-ntfs.img written directly (FAT12)
+    //   sda2  16 MiB Microsoft Reserved
+    //   sda3  rest   Windows NTFS — OS + boot files + BCD all on one partition
+    //
+    // Boot chain: UEFI → sda1 EFI/Boot/bootaa64.efi (uefi-ntfs) →
+    //             NTFS driver → sda3 EFI/Boot/bootaa64.efi (bootmgfw.efi) →
+    //             BCD → winload.efi → Windows
+    step("partitioning disk  (GPT · UEFI:NTFS layout)");
     {
         use std::io::Write as _;
         let mut child = Command::new(&tools.sfdisk)
@@ -125,13 +143,10 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
             .spawn()
             .context("spawn sfdisk")?;
         if let Some(mut stdin) = child.stdin.take() {
-            // EFI System / Microsoft Reserved / Windows Basic Data
-            // Use GUIDs directly — type aliases like 'msreserved' aren't
-            // recognised by older sfdisk versions.
             stdin.write_all(
-                b"name=\"EFI System\",        size=1GiB,  type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B\n\
-                  name=\"Microsoft Reserved\", size=16MiB, type=E3C9E316-0B5C-4DB8-817D-F92DF00215AE\n\
-                  name=\"Windows\",                        type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n",
+                b"name=\"UEFI:NTFS\",          size=2MiB,  type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B\n\
+                  name=\"Microsoft Reserved\",  size=16MiB, type=E3C9E316-0B5C-4DB8-817D-F92DF00215AE\n\
+                  name=\"Windows\",                         type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n",
             )?;
         }
         if !child.wait().context("sfdisk wait")?.success() {
@@ -143,7 +158,7 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
     run(&tools.partprobe, &[&disk_dev])?;
     let _ = Command::new("udevadm").args(["settle", "--timeout=15"]).status();
 
-    for part_dev in [&efi_part, &win_part] {
+    for part_dev in [&uefi_ntfs_part, &win_part] {
         for _ in 0..15 {
             if Path::new(part_dev).exists() { break; }
             std::thread::sleep(Duration::from_secs(1));
@@ -153,15 +168,36 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
         }
     }
 
-    // ── format ────────────────────────────────────────────────────────────────
-    step("formatting EFI → FAT32");
-    run(&tools.mkfs_fat, &["-F32", "-n", "EFI", &efi_part])?;
+    // ── write uefi-ntfs.img to sda1 ──────────────────────────────────────────
+    step("writing uefi-ntfs boot bridge to EFI partition");
+    {
+        let tmp_img = std::env::temp_dir()
+            .join(format!("wifl-uefi-ntfs-{}.img", std::process::id()));
+        std::fs::write(&tmp_img, uefi_ntfs_img)
+            .context("write uefi-ntfs.img to temp")?;
 
+        let status = Command::new("dd")
+            .args([
+                &format!("if={}", tmp_img.display()),
+                &format!("of={}", uefi_ntfs_part),
+                "bs=4M",
+                "conv=fdatasync",
+                "status=none",
+            ])
+            .status()
+            .context("dd uefi-ntfs.img")?;
+        let _ = std::fs::remove_file(&tmp_img);
+        if !status.success() {
+            bail!("dd uefi-ntfs.img failed");
+        }
+    }
+
+    // ── format Windows NTFS ───────────────────────────────────────────────────
     step("formatting Windows → NTFS");
     run(&tools.mkntfs, &["-f", "-L", "Windows", &win_part])?;
     let _ = Command::new("udevadm").args(["settle", "--timeout=10"]).status();
 
-    // ── apply ─────────────────────────────────────────────────────────────────
+    // ── apply Windows image ───────────────────────────────────────────────────
     step(&format!(
         "applying image [{}] to {}  (10–20 min — do not interrupt)",
         image_index, win_part
@@ -173,10 +209,9 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
         &win_part,
     ])?;
 
-    // ── mount for boot file copy ───────────────────────────────────────────────
-    step("mounting partitions");
+    // ── mount Windows NTFS ────────────────────────────────────────────────────
+    step("mounting Windows partition");
     std::fs::create_dir_all(mnt_win)?;
-    std::fs::create_dir_all(mnt_efi)?;
 
     let ntfs_ok = ["-t ntfs3", "-t ntfs-3g"].iter().any(|opts| {
         let mut cmd = Command::new("mount");
@@ -189,48 +224,44 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
             .map(|s| s.success())
             .unwrap_or(false)
     });
-
     if !ntfs_ok {
         bail!("failed to mount {} as NTFS — check: dmesg | tail -20", win_part);
     }
 
-    run_sys("mount", &["-t", "vfat", &efi_part, mnt_efi])?;
-
-    // ── boot files ────────────────────────────────────────────────────────────
-    step("staging EFI boot files");
+    // ── set up EFI directory structure on NTFS ────────────────────────────────
+    // Both EFI\Boot\bootaa64.efi (entry point for uefi-ntfs) and
+    // EFI\Microsoft\Boot\bootmgfw.efi live on the same NTFS partition.
+    // This eliminates the need for a separate FAT32 EFI partition entirely.
+    step("staging EFI boot files on NTFS partition");
     let boot_src    = PathBuf::from(mnt_win).join("Windows/Boot");
-    let efi_ms_boot = PathBuf::from(mnt_efi).join("EFI/Microsoft/Boot");
-    let efi_boot    = PathBuf::from(mnt_efi).join("EFI/Boot");
+    let efi_boot    = PathBuf::from(mnt_win).join("EFI/Boot");
+    let efi_ms_boot = PathBuf::from(mnt_win).join("EFI/Microsoft/Boot");
 
     if !boot_src.join("EFI").exists() {
-        bail!("Windows/Boot/EFI not found in applied image");
+        bail!("Windows/Boot/EFI not found in applied image — image may be incomplete");
     }
 
-    std::fs::create_dir_all(&efi_ms_boot)?;
     std::fs::create_dir_all(&efi_boot)?;
+    std::fs::create_dir_all(&efi_ms_boot)?;
 
-    run_sys("cp", &[
-        "-r",
-        &format!("{}/.", boot_src.join("EFI").display()),
-        efi_ms_boot.to_str().unwrap(),
-    ])?;
-    run_sys("cp", &[
-        boot_src.join("EFI/bootmgfw.efi").to_str().unwrap(),
-        efi_boot.join("bootx64.efi").to_str().unwrap(),
-    ])?;
-
-    // BCD location varies by Windows version: try root of Boot/, then DVD/EFI/
-    let bcd = [
-        boot_src.join("BCD"),
-        boot_src.join("DVD/EFI/BCD"),
-    ]
-    .into_iter()
-    .find(|p| p.exists());
-    if let Some(bcd) = bcd {
-        run_sys("cp", &[bcd.to_str().unwrap(), efi_ms_boot.join("BCD").to_str().unwrap()])?;
-    } else {
-        bail!("BCD not found in applied image — cannot set up boot");
+    let bootmgfw = boot_src.join("EFI/bootmgfw.efi");
+    if !bootmgfw.exists() {
+        bail!("bootmgfw.efi not found in Windows/Boot/EFI/");
     }
+
+    // EFI\Boot\bootaa64.efi — uefi-ntfs chain-loads this from the NTFS partition
+    run_sys("cp", &[
+        bootmgfw.to_str().unwrap(),
+        efi_boot.join(bcd::EFI_BOOT_FILENAME).to_str().unwrap(),
+    ])?;
+
+    // EFI\Microsoft\Boot\bootmgfw.efi — canonical Windows Boot Manager location
+    run_sys("cp", &[
+        bootmgfw.to_str().unwrap(),
+        efi_ms_boot.join("bootmgfw.efi").to_str().unwrap(),
+    ])?;
+
+    // Fonts and Resources (needed for boot menu display)
     for dir in ["Fonts", "Resources"] {
         let src = boot_src.join(dir);
         if src.exists() {
@@ -238,13 +269,24 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
         }
     }
 
-    // ── NVRAM ─────────────────────────────────────────────────────────────────
+    // ── create BCD on NTFS ────────────────────────────────────────────────────
+    // BCD lives on the same NTFS partition as Windows.
+    // All device elements point to sda3 (one partition GUID for everything).
+    step("creating Windows Boot Configuration Data (BCD)");
+    let template = PathBuf::from(mnt_win).join("Windows/System32/config/BCD-Template");
+    let bcd_dest  = efi_ms_boot.join("BCD");
+    bcd::create_bcd(&template, &bcd_dest, &disk_dev, &win_part)?;
+
+    // ── NVRAM boot entry ──────────────────────────────────────────────────────
+    // Register sda1 (the uefi-ntfs FAT12 partition) as the UEFI boot entry.
+    // UEFI will load EFI\Boot\bootaa64.efi from sda1, which is the uefi-ntfs
+    // bridge that then loads bootmgfw.efi from the NTFS partition.
     step("registering UEFI boot entry");
 
     if let Ok(out) = Command::new(&tools.efibootmgr).output() {
         let text = String::from_utf8_lossy(&out.stdout);
         for line in text.lines() {
-            if line.to_lowercase().contains("windows boot manager") {
+            if line.to_lowercase().contains("windows") {
                 if let Some(num) = line
                     .strip_prefix("Boot")
                     .and_then(|s| s.split(|c: char| !c.is_ascii_hexdigit()).next())
@@ -262,8 +304,8 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
             "--create",
             "--disk", &disk_dev,
             "--part", "1",
-            "--label", "Windows Boot Manager",
-            "--loader", r"\EFI\Microsoft\Boot\bootmgfw.efi",
+            "--label", "Windows (UEFI:NTFS)",
+            "--loader", r"\EFI\Boot\bootaa64.efi",
         ])
         .stdout(Stdio::null())
         .status()
@@ -273,19 +315,20 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
     if ok {
         println!("  \x1b[32m·\x1b[0m  boot entry created");
     } else {
-        println!("  \x1b[33m·\x1b[0m  efibootmgr failed — add entry manually in firmware setup");
+        println!(
+            "  \x1b[33m·\x1b[0m  efibootmgr failed (non-UEFI host?) — \
+             UEFI should auto-discover sda1 EFI\\Boot\\{} anyway",
+            bcd::EFI_BOOT_FILENAME
+        );
     }
 
-    // ── unmount ───────────────────────────────────────────────────────────────
+    // ── flush & unmount ───────────────────────────────────────────────────────
     step("flushing & unmounting");
     let _ = Command::new("sync").output();
     let _ = Command::new(&tools.fuser).args(["-km", mnt_win]).output();
-    let _ = Command::new(&tools.fuser).args(["-km", mnt_efi]).output();
     std::thread::sleep(Duration::from_secs(1));
     let _ = Command::new("umount").args(["-R",  mnt_win]).output();
     let _ = Command::new("umount").args(["-Rl", mnt_win]).output();
-    let _ = Command::new("umount").args(["-R",  mnt_efi]).output();
-    let _ = Command::new("umount").args(["-Rl", mnt_efi]).output();
 
     Ok(())
 }
@@ -320,7 +363,6 @@ fn run_inherit(prog: impl AsRef<OsStr>, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-// For system tools always in PATH (mount, cp, etc.)
 fn run_sys(prog: &str, args: &[&str]) -> Result<()> {
     let status = Command::new(prog)
         .args(args)

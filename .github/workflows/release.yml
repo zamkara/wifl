@@ -70,11 +70,11 @@ jobs:
           echo "WIFL_WIMLIB_IMAGEX=$PWD/bundled-tools/wimlib-imagex" >> "$GITHUB_ENV"
           echo "WIFL_SFDISK=$PWD/bundled-tools/sfdisk"               >> "$GITHUB_ENV"
           echo "WIFL_MKNTFS=$PWD/bundled-tools/mkntfs"               >> "$GITHUB_ENV"
-          echo "WIFL_MKFS_FAT=$PWD/bundled-tools/mkfs.fat"           >> "$GITHUB_ENV"
           echo "WIFL_PARTPROBE=$PWD/bundled-tools/partprobe"         >> "$GITHUB_ENV"
           echo "WIFL_EFIBOOTMGR=$PWD/bundled-tools/efibootmgr"       >> "$GITHUB_ENV"
           echo "WIFL_LSBLK=$PWD/bundled-tools/lsblk"                 >> "$GITHUB_ENV"
           echo "WIFL_FUSER=$PWD/bundled-tools/fuser"                  >> "$GITHUB_ENV"
+          echo "WIFL_UEFI_NTFS=$PWD/res/uefi-ntfs.img"              >> "$GITHUB_ENV"
 
       - name: Install zig + cargo-zigbuild
         if: matrix.use_zig

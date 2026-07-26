@@ -4,7 +4,6 @@ const TOOLS: &[(&str, &str, &str)] = &[
     ("wimlib-imagex", "WIFL_WIMLIB_IMAGEX", "wimlib_imagex"),
     ("sfdisk",        "WIFL_SFDISK",        "sfdisk"),
     ("mkntfs",        "WIFL_MKNTFS",        "mkntfs"),
-    ("mkfs.fat",      "WIFL_MKFS_FAT",      "mkfs_fat"),
     ("partprobe",     "WIFL_PARTPROBE",     "partprobe"),
     ("efibootmgr",    "WIFL_EFIBOOTMGR",   "efibootmgr"),
     ("lsblk",         "WIFL_LSBLK",         "lsblk"),
@@ -19,8 +18,34 @@ fn main() {
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=TAG");
+    println!("cargo:rerun-if-env-changed=WIFL_UEFI_NTFS");
     println!("cargo:rustc-env=WIFL_BUILD_TAG={}", tag);
     println!("cargo:rustc-env=WIFL_TARGET={}", target);
+
+    // Bundle uefi-ntfs.img (1 MiB FAT12 NTFS boot bridge from Rufus project).
+    // Source priority: WIFL_UEFI_NTFS env var, then res/uefi-ntfs.img in repo root.
+    {
+        let dest = out.join("uefi_ntfs_img");
+        if target_os == "linux" {
+            let src = env::var("WIFL_UEFI_NTFS")
+                .ok()
+                .or_else(|| {
+                    // Resolve relative to CARGO_MANIFEST_DIR
+                    let manifest = env::var("CARGO_MANIFEST_DIR").ok()?;
+                    let candidate = PathBuf::from(manifest).join("res/uefi-ntfs.img");
+                    if candidate.exists() { Some(candidate.display().to_string()) } else { None }
+                });
+            if let Some(src) = src {
+                fs::copy(&src, &dest)
+                    .unwrap_or_else(|e| panic!("bundling uefi-ntfs.img from {}: {}", src, e));
+                println!("cargo:rerun-if-changed={}", src);
+            } else {
+                fs::write(&dest, []).expect("write placeholder");
+            }
+        } else {
+            fs::write(&dest, []).expect("write placeholder");
+        }
+    }
 
     for (name, env_key, filename) in TOOLS {
         println!("cargo:rerun-if-env-changed={}", env_key);

@@ -1,4 +1,5 @@
 mod api;
+mod bcd;
 mod catalog;
 mod download;
 mod install;

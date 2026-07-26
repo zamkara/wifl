@@ -7,18 +7,17 @@ use std::os::unix::fs::PermissionsExt;
 static WIMLIB_IMAGEX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/wimlib_imagex"));
 static SFDISK:        &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sfdisk"));
 static MKNTFS:        &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mkntfs"));
-static MKFS_FAT:      &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mkfs_fat"));
 static PARTPROBE:     &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/partprobe"));
 static EFIBOOTMGR:    &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/efibootmgr"));
 static LSBLK:         &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/lsblk"));
 static FUSER:         &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/fuser"));
+static UEFI_NTFS_IMG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/uefi_ntfs_img"));
 
 pub struct Tools {
     _dir:           PathBuf,
     pub wimlib:     PathBuf,
     pub sfdisk:     PathBuf,
     pub mkntfs:     PathBuf,
-    pub mkfs_fat:   PathBuf,
     pub partprobe:  PathBuf,
     pub efibootmgr: PathBuf,
     pub lsblk:      PathBuf,
@@ -44,8 +43,6 @@ impl Tools {
                 "util-linux: pacman -S util-linux  |  apt install util-linux")?,
             mkntfs:     slot(&dir, "mkntfs",        MKNTFS,
                 "ntfsprogs: pacman -S ntfs-3g  |  apt install ntfs-3g")?,
-            mkfs_fat:   slot(&dir, "mkfs.fat",      MKFS_FAT,
-                "dosfstools: pacman -S dosfstools  |  apt install dosfstools")?,
             partprobe:  slot(&dir, "partprobe",     PARTPROBE,
                 "parted: pacman -S parted  |  apt install parted")?,
             efibootmgr: slot(&dir, "efibootmgr",   EFIBOOTMGR,
@@ -56,6 +53,11 @@ impl Tools {
                 "psmisc: pacman -S psmisc  |  apt install psmisc")?,
             _dir: dir,
         })
+    }
+
+    /// Raw bytes of the bundled uefi-ntfs.img (empty if not bundled at build time).
+    pub fn uefi_ntfs_img() -> &'static [u8] {
+        UEFI_NTFS_IMG
     }
 }
 

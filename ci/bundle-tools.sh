@@ -12,7 +12,7 @@ docker run --rm --platform "$PLATFORM" \
     -v "$OUT:/out" \
     alpine:latest sh -c '
         set -e
-        apk add --no-scripts wimlib gptfdisk ntfs-3g ntfs-3g-progs dosfstools parted efibootmgr util-linux psmisc
+        apk add --no-scripts wimlib gptfdisk ntfs-3g ntfs-3g-progs parted efibootmgr util-linux psmisc
 
         # Locate binary via apk package database (reliable on Alpine regardless of PATH)
         pkg_find() {
@@ -45,7 +45,6 @@ docker run --rm --platform "$PLATFORM" \
         grab wimlib-imagex wimlib
         grab sfdisk        sfdisk
         grab mkntfs        ntfs-3g-progs
-        grab mkfs.fat      dosfstools
         grab partprobe     parted
         grab efibootmgr    efibootmgr
         grab lsblk         lsblk
