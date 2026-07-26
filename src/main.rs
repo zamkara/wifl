@@ -5,11 +5,13 @@ mod download;
 mod install;
 mod select;
 mod tools;
+mod tui;
 mod update;
 
 use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use catalog::EsdFile;
+use tui::Tui;
 
 
 fn main() -> Result<()> {
@@ -29,22 +31,16 @@ fn main() -> Result<()> {
 
     check_root()?;
 
-    println!();
-    println!("  \x1b[1mwifl\x1b[0m  windows image fetch + install  \x1b[90m{}\x1b[0m", update::current_tag());
-    println!();
-
-    info("initialising bundled tools…");
-    let t = tools::Tools::setup()?;
+    let mut ui = Tui::new(update::current_tag())?;
 
     // ── 1. Windows version ─────────────────────────────────────────────────────
-    info("fetching available releases…");
     let versions = api::fetch_versions()?;
     if versions.is_empty() { bail!("no versions returned from server"); }
 
     let ver_labels: Vec<String> = versions.iter()
         .map(|v| format!("Windows {}", v.number))
         .collect();
-    let ver_idx = select::select("select Windows version", &ver_labels)?;
+    let ver_idx = ui.select("Select Windows version", &ver_labels)?;
     let version = &versions[ver_idx];
 
     // ── 2. Build ───────────────────────────────────────────────────────────────
@@ -54,11 +50,22 @@ fn main() -> Result<()> {
     let build_labels: Vec<String> = version.releases.iter()
         .map(|r| format!("build {}   ({})", r.build, fmt_date(&r.date)))
         .collect();
-    let build_idx = select::select("select build", &build_labels)?;
+    let build_idx = ui.select("Select build", &build_labels)?;
     let build = &version.releases[build_idx].build;
 
     // ── 3. Fetch catalog ───────────────────────────────────────────────────────
-    info(&format!("fetching catalog for build {}…", build));
+    // The network request happens while still in alt-screen; just draw a hint.
+    {
+        use std::io::Write as _;
+        use crossterm::{cursor, queue, style::{Print, SetForegroundColor, Color, ResetColor},
+                        terminal::ClearType};
+        let mut stdout = std::io::stdout();
+        let _ = queue!(stdout, cursor::MoveTo(4, 10),
+                       crossterm::terminal::Clear(ClearType::CurrentLine),
+                       SetForegroundColor(Color::DarkGrey), Print("fetching catalog…"), ResetColor);
+        let _ = stdout.flush();
+    }
+
     let catalog = api::fetch_catalog(build)?;
     if catalog.is_empty() { bail!("catalog is empty for build {}", build); }
 
@@ -69,7 +76,7 @@ fn main() -> Result<()> {
         .into_iter()
         .collect();
     arches.sort();
-    let arch_idx = select::select("select architecture", &arches)?;
+    let arch_idx = ui.select("Select architecture", &arches)?;
     let arch = &arches[arch_idx];
 
     // ── 5. Language ────────────────────────────────────────────────────────────
@@ -82,7 +89,7 @@ fn main() -> Result<()> {
     let lang_labels: Vec<String> = lang_files.iter()
         .map(|f| format!("{}  ({})", f.language, f.language_code))
         .collect();
-    let lang_idx  = select::select("select language", &lang_labels)?;
+    let lang_idx  = ui.select("Select language", &lang_labels)?;
     let lang_code = &lang_files[lang_idx].language_code;
 
     // ── 6. ESD variant ─────────────────────────────────────────────────────────
@@ -95,63 +102,79 @@ fn main() -> Result<()> {
         let labels: Vec<String> = candidates.iter()
             .map(|f| format!("{}   {:.2} GiB", f.edition_label(), f.size_gb()))
             .collect();
-        let idx = select::select("select edition group", &labels)?;
+        let idx = ui.select("Select edition group", &labels)?;
         candidates[idx]
     };
 
     // ── 7. Disk ────────────────────────────────────────────────────────────────
+    let t = tools::Tools::setup()?;
     let disks = install::list_disks(&t)?;
     if disks.is_empty() { bail!("no block devices found"); }
     let disk_labels: Vec<String> = disks.iter().map(|d| d.to_string()).collect();
-    let disk_idx = select::select("select destination disk", &disk_labels)?;
+    let disk_idx = ui.select("Select destination disk", &disk_labels)?;
     let disk = &disks[disk_idx];
 
     // ── 8. Confirm ─────────────────────────────────────────────────────────────
-    println!();
-    println!("  \x1b[33m·\x1b[0m  all data on /dev/{} will be destroyed", disk.name);
-    println!();
-    let confirm = vec!["yes — proceed".to_string(), "no  — abort".to_string()];
-    if select::select("confirm?", &confirm)? != 0 {
+    let confirm = vec![
+        format!("yes — erase /dev/{} and install", disk.name),
+        "no  — abort".to_string(),
+    ];
+    if ui.select("Confirm?", &confirm)? != 0 {
         bail!("aborted");
     }
 
+    // ── Switch to normal terminal for the rest ─────────────────────────────────
+    ui.enter_working_mode()?;
+
     // ── 9. Download ESD ────────────────────────────────────────────────────────
-    println!();
     let esd_dir = esd_dir()?;
-    info(&format!("ESD directory: {}", esd_dir.display()));
+    ui.info(&format!("ESD directory: {}", esd_dir.display()));
     let esd_path = esd_dir.join(&esd_file.filename);
     std::fs::create_dir_all(&esd_dir)
         .with_context(|| format!("create ESD directory {}", esd_dir.display()))?;
-    download::ensure_esd(&esd_file.url, &esd_path, &esd_file.sha256, esd_file.size)
+    download::ensure_esd(&esd_file.url, &esd_path, &esd_file.sha256, esd_file.size, &ui)
         .with_context(|| format!("download/verify {}", esd_path.display()))?;
 
     // ── 10. Select image index ─────────────────────────────────────────────────
-    println!();
-    info("reading image catalogue from ESD…");
-    let images = install::list_images(&t, &esd_path)
-        .with_context(|| format!("list images in {}", esd_path.display()))?;
-    if images.is_empty() { bail!("no installable images found in ESD"); }
-    let img_labels: Vec<String> = images.iter().map(|i| i.to_string()).collect();
-    let img_idx = select::select("select edition to install", &img_labels)?;
-    let image   = &images[img_idx];
+    // Back to raw+alt screen for the image selection menu.
+    let image_idx = {
+        ui.info("reading image catalogue from ESD…");
+        let images = install::list_images(&t, &esd_path)
+            .with_context(|| format!("list images in {}", esd_path.display()))?;
+        if images.is_empty() { bail!("no installable images found in ESD"); }
+
+        // Re-enter alt screen for this one last menu
+        let mut ui2 = Tui::new(update::current_tag())?;
+        // Copy over selections so far so the context is visible
+        for (l, v) in &ui.selections {
+            ui2.selections.push((l.clone(), v.clone()));
+        }
+        let img_labels: Vec<String> = images.iter().map(|i| i.to_string()).collect();
+        let idx = ui2.select("Select edition to install", &img_labels)?;
+        // Copy last selection back
+        if let Some(last) = ui2.selections.last() {
+            ui.selections.push(last.clone());
+        }
+        ui2.enter_working_mode()?;
+        let image = &images[idx];
+        image.index
+    };
 
     // ── 11. Install ────────────────────────────────────────────────────────────
-    println!();
-    install::install(&t, disk, &esd_path, image.index)
+    install::install(&t, disk, &esd_path, image_idx, &ui)
         .with_context(|| format!("install to /dev/{}", disk.name))?;
 
     println!();
     println!("  \x1b[1mdone\x1b[0m  reboot to continue Windows setup");
     println!();
-    println!("  \x1b[33m·\x1b[0m  first boot may trigger Startup Repair — expected, let it complete");
+    println!("  \x1b[33m·\x1b[0m  first boot may take longer — Windows finalising setup");
     println!();
     Ok(())
 }
 
 fn esd_dir() -> Result<PathBuf> {
     // When running via `sudo`, HOME is often reset to /root but the ESD
-    // should live in the invoking user's home directory.  Read SUDO_USER
-    // and look up their home in /etc/passwd before falling back to HOME.
+    // should live in the invoking user's home.  Read SUDO_USER first.
     if let Ok(sudo_user) = std::env::var("SUDO_USER") {
         if !sudo_user.is_empty() && sudo_user != "root" {
             if let Ok(home) = passwd_home(&sudo_user) {
@@ -170,11 +193,8 @@ fn passwd_home(username: &str) -> Result<String> {
         let mut f = line.splitn(7, ':');
         let name = f.next().unwrap_or("");
         if name == username {
-            // field order: name:password:uid:gid:gecos:home:shell
             let home = f.nth(4).unwrap_or("").to_string();
-            if !home.is_empty() {
-                return Ok(home);
-            }
+            if !home.is_empty() { return Ok(home); }
         }
     }
     bail!("user '{}' not found in /etc/passwd", username)
@@ -186,10 +206,6 @@ fn check_root() -> Result<()> {
         bail!("root required — run: sudo wifl");
     }
     Ok(())
-}
-
-fn info(msg: &str) {
-    println!("  \x1b[32m·\x1b[0m  {}", msg);
 }
 
 fn fmt_date(d: &str) -> String {

@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 use anyhow::{bail, Context, Result};
-use crate::{bcd, tools::Tools};
+use crate::{bcd, tools::Tools, tui::Tui};
 
 #[derive(Debug, Clone)]
 pub struct DiskInfo {
@@ -95,7 +95,7 @@ fn part(disk: &str, n: u8) -> String {
     }
 }
 
-pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> Result<()> {
+pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32, ui: &Tui) -> Result<()> {
     let disk_dev      = format!("/dev/{}", disk.name);
     let uefi_ntfs_part = part(&disk.name, 1);  // tiny FAT12 — uefi-ntfs bridge
     let msr_part       = part(&disk.name, 2);  // Microsoft Reserved
@@ -115,7 +115,7 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
     }
 
     // ── cleanup ───────────────────────────────────────────────────────────────
-    step("clearing existing mounts");
+    ui.step("clearing existing mounts");
     let _ = Command::new("umount").args(["-Rl", mnt_win]).output();
     for dev in [&disk_dev, &uefi_ntfs_part, &msr_part, &win_part] {
         let _ = Command::new(&tools.fuser).args(["-km", dev.as_str()]).output();
@@ -132,7 +132,7 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
     // Boot chain: UEFI → sda1 EFI/Boot/bootaa64.efi (uefi-ntfs) →
     //             NTFS driver → sda3 EFI/Boot/bootaa64.efi (bootmgfw.efi) →
     //             BCD → winload.efi → Windows
-    step("partitioning disk  (GPT · UEFI:NTFS layout)");
+    ui.step("partitioning disk  (GPT · UEFI:NTFS layout)");
     {
         use std::io::Write as _;
         let mut child = Command::new(&tools.sfdisk)
@@ -154,7 +154,7 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
         }
     }
 
-    step("waiting for kernel to register partitions");
+    ui.step("waiting for kernel to register partitions");
     run(&tools.partprobe, &[&disk_dev])?;
     let _ = Command::new("udevadm").args(["settle", "--timeout=15"]).status();
 
@@ -169,7 +169,7 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
     }
 
     // ── write uefi-ntfs.img to sda1 ──────────────────────────────────────────
-    step("writing uefi-ntfs boot bridge to EFI partition");
+    ui.step("writing uefi-ntfs boot bridge to EFI partition");
     {
         let tmp_img = std::env::temp_dir()
             .join(format!("wifl-uefi-ntfs-{}.img", std::process::id()));
@@ -193,12 +193,12 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
     }
 
     // ── format Windows NTFS ───────────────────────────────────────────────────
-    step("formatting Windows → NTFS");
+    ui.step("formatting Windows → NTFS");
     run(&tools.mkntfs, &["-f", "-L", "Windows", &win_part])?;
     let _ = Command::new("udevadm").args(["settle", "--timeout=10"]).status();
 
     // ── apply Windows image ───────────────────────────────────────────────────
-    step(&format!(
+    ui.step(&format!(
         "applying image [{}] to {}  (10–20 min — do not interrupt)",
         image_index, win_part
     ));
@@ -210,7 +210,7 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
     ])?;
 
     // ── mount Windows NTFS ────────────────────────────────────────────────────
-    step("mounting Windows partition");
+    ui.step("mounting Windows partition");
     std::fs::create_dir_all(mnt_win)
         .with_context(|| format!("create mount point {}", mnt_win))?;
 
@@ -233,7 +233,7 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
     // Both EFI\Boot\bootaa64.efi (entry point for uefi-ntfs) and
     // EFI\Microsoft\Boot\bootmgfw.efi live on the same NTFS partition.
     // This eliminates the need for a separate FAT32 EFI partition entirely.
-    step("staging EFI boot files on NTFS partition");
+    ui.step("staging EFI boot files on NTFS partition");
     let boot_src    = PathBuf::from(mnt_win).join("Windows/Boot");
     let efi_boot    = PathBuf::from(mnt_win).join("EFI/Boot");
     let efi_ms_boot = PathBuf::from(mnt_win).join("EFI/Microsoft/Boot");
@@ -283,7 +283,7 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
     // ── create BCD on NTFS ────────────────────────────────────────────────────
     // BCD lives on the same NTFS partition as Windows.
     // All device elements point to sda3 (one partition GUID for everything).
-    step("creating Windows Boot Configuration Data (BCD)");
+    ui.step("creating Windows Boot Configuration Data (BCD)");
     let template = PathBuf::from(mnt_win).join("Windows/System32/config/BCD-Template");
     let bcd_dest  = efi_ms_boot.join("BCD");
     bcd::create_bcd(&template, &bcd_dest, &disk_dev, &win_part)?;
@@ -292,7 +292,7 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
     // Register sda1 (the uefi-ntfs FAT12 partition) as the UEFI boot entry.
     // UEFI will load EFI\Boot\bootaa64.efi from sda1, which is the uefi-ntfs
     // bridge that then loads bootmgfw.efi from the NTFS partition.
-    step("registering UEFI boot entry");
+    ui.step("registering UEFI boot entry");
 
     if let Ok(out) = Command::new(&tools.efibootmgr).output() {
         let text = String::from_utf8_lossy(&out.stdout);
@@ -324,28 +324,24 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
         .unwrap_or(false);
 
     if ok {
-        println!("  \x1b[32m·\x1b[0m  boot entry created");
+        ui.step_ok("boot entry created");
     } else {
-        println!(
-            "  \x1b[33m·\x1b[0m  efibootmgr failed (non-UEFI host?) — \
-             UEFI should auto-discover sda1 EFI\\Boot\\{} anyway",
+        ui.info(&format!(
+            "efibootmgr failed — UEFI should auto-discover EFI\\Boot\\{}",
             bcd::EFI_BOOT_FILENAME
-        );
+        ));
     }
 
     // ── flush & unmount ───────────────────────────────────────────────────────
-    step("flushing & unmounting");
+    ui.step("flushing & unmounting");
     let _ = Command::new("sync").output();
     let _ = Command::new(&tools.fuser).args(["-km", mnt_win]).output();
     std::thread::sleep(Duration::from_secs(1));
     let _ = Command::new("umount").args(["-R",  mnt_win]).output();
     let _ = Command::new("umount").args(["-Rl", mnt_win]).output();
+    ui.step_ok("done");
 
     Ok(())
-}
-
-fn step(msg: &str) {
-    println!("\n  \x1b[32m·\x1b[0m  {}", msg);
 }
 
 fn run(prog: impl AsRef<OsStr>, args: &[&str]) -> Result<()> {

@@ -2,23 +2,23 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
 use anyhow::{bail, Context, Result};
-use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
+use crate::tui::Tui;
 
-pub fn ensure_esd(url: &str, dest: &Path, expected_sha256: &str, size: u64) -> Result<()> {
+pub fn ensure_esd(url: &str, dest: &Path, expected_sha256: &str, size: u64, ui: &Tui) -> Result<()> {
     if dest.exists() {
-        step("file present — verifying sha256…");
+        ui.step("verifying cached ESD…");
         if verify(dest, expected_sha256)? {
-            step("checksum ok");
+            ui.step_ok("checksum ok — skipping download");
             return Ok(());
         }
-        step("checksum mismatch — re-downloading");
+        ui.step("checksum mismatch — re-downloading");
         fs::remove_file(dest).context("remove stale ESD file")?;
     }
 
-    step(&format!("downloading  {:.2} GiB", size as f64 / 1_073_741_824.0));
+    ui.step(&format!("downloading  {:.2} GiB", size as f64 / 1_073_741_824.0));
 
-    let client   = reqwest::blocking::Client::builder()
+    let client = reqwest::blocking::Client::builder()
         .timeout(None)
         .build()?;
     let mut resp = client.get(url).send().context("GET request")?;
@@ -27,15 +27,7 @@ pub fn ensure_esd(url: &str, dest: &Path, expected_sha256: &str, size: u64) -> R
         bail!("server returned {}", resp.status());
     }
 
-    let pb = ProgressBar::new(size);
-    pb.set_style(
-        ProgressStyle::with_template(
-            "  {bar:44.cyan/238}  {bytes:>10} / {total_bytes}  eta {eta}",
-        )?
-        .progress_chars("█▓░"),
-    );
-
-    let mut file = fs::File::create(dest).context("create file")?;
+    let mut file = fs::File::create(dest).context("create ESD file")?;
     let mut buf  = vec![0u8; 131_072];
     let mut done = 0u64;
 
@@ -44,17 +36,16 @@ pub fn ensure_esd(url: &str, dest: &Path, expected_sha256: &str, size: u64) -> R
         if n == 0 { break; }
         file.write_all(&buf[..n]).context("write ESD file")?;
         done += n as u64;
-        pb.set_position(done);
+        ui.progress(done, size);
     }
+    ui.progress_done();
 
-    pb.finish_and_clear();
-
-    step("verifying sha256…");
+    ui.step("verifying sha256…");
     if !verify(dest, expected_sha256)? {
-        fs::remove_file(dest)?;
-        bail!("sha256 mismatch after download");
+        fs::remove_file(dest).context("remove failed ESD")?;
+        bail!("sha256 mismatch after download — file corrupted");
     }
-    step("verified");
+    ui.step_ok("verified");
 
     Ok(())
 }
@@ -70,8 +61,4 @@ fn verify(path: &Path, expected: &str) -> Result<bool> {
         h.update(&buf[..n]);
     }
     Ok(hex::encode(h.finalize()).eq_ignore_ascii_case(expected))
-}
-
-fn step(msg: &str) {
-    println!("  \x1b[32m·\x1b[0m  {}", msg);
 }
