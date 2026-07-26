@@ -211,7 +211,8 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
 
     // ── mount Windows NTFS ────────────────────────────────────────────────────
     step("mounting Windows partition");
-    std::fs::create_dir_all(mnt_win)?;
+    std::fs::create_dir_all(mnt_win)
+        .with_context(|| format!("create mount point {}", mnt_win))?;
 
     let ntfs_ok = ["-t ntfs3", "-t ntfs-3g"].iter().any(|opts| {
         let mut cmd = Command::new("mount");
@@ -241,8 +242,18 @@ pub fn install(tools: &Tools, disk: &DiskInfo, esd: &Path, image_index: u32) -> 
         bail!("Windows/Boot/EFI not found in applied image — image may be incomplete");
     }
 
-    std::fs::create_dir_all(&efi_boot)?;
-    std::fs::create_dir_all(&efi_ms_boot)?;
+    // If the applied image left a non-directory at \EFI (rare but possible),
+    // remove it so create_dir_all does not hit ENOTDIR.
+    let efi_root = PathBuf::from(mnt_win).join("EFI");
+    if efi_root.exists() && !efi_root.is_dir() {
+        std::fs::remove_file(&efi_root)
+            .with_context(|| format!("remove stale file at {}", efi_root.display()))?;
+    }
+
+    std::fs::create_dir_all(&efi_boot)
+        .with_context(|| format!("create {}", efi_boot.display()))?;
+    std::fs::create_dir_all(&efi_ms_boot)
+        .with_context(|| format!("create {}", efi_ms_boot.display()))?;
 
     let bootmgfw = boot_src.join("EFI/bootmgfw.efi");
     if !bootmgfw.exists() {

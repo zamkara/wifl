@@ -228,13 +228,16 @@ pub fn create_bcd(
 
     // Copy BCD-Template → destination (this is the hive we will merge into)
     std::fs::copy(template_src, bcd_dest)
-        .with_context(|| format!("copy BCD-Template to {}", bcd_dest.display()))?;
+        .with_context(|| format!(
+            "copy BCD-Template ({}) to {}",
+            template_src.display(), bcd_dest.display()
+        ))?;
 
     // Write .reg to a temp file next to the BCD
     let reg_path = bcd_dest.with_extension("reg");
     {
         let mut f = std::fs::File::create(&reg_path)
-            .context("create BCD .reg temp file")?;
+            .with_context(|| format!("create BCD .reg at {}", reg_path.display()))?;
         f.write_all(reg.as_bytes())?;
     }
 
