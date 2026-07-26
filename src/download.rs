@@ -13,7 +13,7 @@ pub fn ensure_esd(url: &str, dest: &Path, expected_sha256: &str, size: u64) -> R
             return Ok(());
         }
         step("checksum mismatch — re-downloading");
-        fs::remove_file(dest)?;
+        fs::remove_file(dest).context("remove stale ESD file")?;
     }
 
     step(&format!("downloading  {:.2} GiB", size as f64 / 1_073_741_824.0));
@@ -40,9 +40,9 @@ pub fn ensure_esd(url: &str, dest: &Path, expected_sha256: &str, size: u64) -> R
     let mut done = 0u64;
 
     loop {
-        let n = resp.read(&mut buf)?;
+        let n = resp.read(&mut buf).context("read HTTP response")?;
         if n == 0 { break; }
-        file.write_all(&buf[..n])?;
+        file.write_all(&buf[..n]).context("write ESD file")?;
         done += n as u64;
         pb.set_position(done);
     }
@@ -60,11 +60,12 @@ pub fn ensure_esd(url: &str, dest: &Path, expected_sha256: &str, size: u64) -> R
 }
 
 fn verify(path: &Path, expected: &str) -> Result<bool> {
-    let mut f   = fs::File::open(path)?;
+    let mut f   = fs::File::open(path)
+        .with_context(|| format!("open for verify: {}", path.display()))?;
     let mut h   = Sha256::new();
     let mut buf = vec![0u8; 131_072];
     loop {
-        let n = f.read(&mut buf)?;
+        let n = f.read(&mut buf).context("read during sha256")?;
         if n == 0 { break; }
         h.update(&buf[..n]);
     }

@@ -8,7 +8,7 @@ mod tools;
 mod update;
 
 use std::path::PathBuf;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use catalog::EsdFile;
 
 
@@ -118,14 +118,18 @@ fn main() -> Result<()> {
     // ── 9. Download ESD ────────────────────────────────────────────────────────
     println!();
     let esd_dir = esd_dir()?;
+    info(&format!("ESD directory: {}", esd_dir.display()));
     let esd_path = esd_dir.join(&esd_file.filename);
-    std::fs::create_dir_all(&esd_dir)?;
-    download::ensure_esd(&esd_file.url, &esd_path, &esd_file.sha256, esd_file.size)?;
+    std::fs::create_dir_all(&esd_dir)
+        .with_context(|| format!("create ESD directory {}", esd_dir.display()))?;
+    download::ensure_esd(&esd_file.url, &esd_path, &esd_file.sha256, esd_file.size)
+        .with_context(|| format!("download/verify {}", esd_path.display()))?;
 
     // ── 10. Select image index ─────────────────────────────────────────────────
     println!();
     info("reading image catalogue from ESD…");
-    let images = install::list_images(&t, &esd_path)?;
+    let images = install::list_images(&t, &esd_path)
+        .with_context(|| format!("list images in {}", esd_path.display()))?;
     if images.is_empty() { bail!("no installable images found in ESD"); }
     let img_labels: Vec<String> = images.iter().map(|i| i.to_string()).collect();
     let img_idx = select::select("select edition to install", &img_labels)?;
@@ -133,7 +137,8 @@ fn main() -> Result<()> {
 
     // ── 11. Install ────────────────────────────────────────────────────────────
     println!();
-    install::install(&t, disk, &esd_path, image.index)?;
+    install::install(&t, disk, &esd_path, image.index)
+        .with_context(|| format!("install to /dev/{}", disk.name))?;
 
     println!();
     println!("  \x1b[1mdone\x1b[0m  reboot to continue Windows setup");
@@ -144,8 +149,35 @@ fn main() -> Result<()> {
 }
 
 fn esd_dir() -> Result<PathBuf> {
+    // When running via `sudo`, HOME is often reset to /root but the ESD
+    // should live in the invoking user's home directory.  Read SUDO_USER
+    // and look up their home in /etc/passwd before falling back to HOME.
+    if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+        if !sudo_user.is_empty() && sudo_user != "root" {
+            if let Ok(home) = passwd_home(&sudo_user) {
+                return Ok(PathBuf::from(home).join("Downloads").join("wifl"));
+            }
+        }
+    }
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
     Ok(PathBuf::from(home).join("Downloads").join("wifl"))
+}
+
+fn passwd_home(username: &str) -> Result<String> {
+    let passwd = std::fs::read_to_string("/etc/passwd")
+        .context("read /etc/passwd")?;
+    for line in passwd.lines() {
+        let mut f = line.splitn(7, ':');
+        let name = f.next().unwrap_or("");
+        if name == username {
+            // field order: name:password:uid:gid:gecos:home:shell
+            let home = f.nth(4).unwrap_or("").to_string();
+            if !home.is_empty() {
+                return Ok(home);
+            }
+        }
+    }
+    bail!("user '{}' not found in /etc/passwd", username)
 }
 
 fn check_root() -> Result<()> {
