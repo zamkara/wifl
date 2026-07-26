@@ -189,43 +189,43 @@ pub fn create_bcd(
     let reg = format!(
         "Windows Registry Editor Version 5.00\r\n\
         \r\n\
-        [Objects\\{{{BM}}}\\Description]\r\n\
+        [BCD00000000\\Objects\\{{{BM}}}\\Description]\r\n\
         \"Type\"=dword:10100002\r\n\
         \r\n\
-        [Objects\\{{{BM}}}\\Elements\\11000001]\r\n\
+        [BCD00000000\\Objects\\{{{BM}}}\\Elements\\11000001]\r\n\
         \"Element\"=hex:{dev}\r\n\
         \r\n\
-        [Objects\\{{{BM}}}\\Elements\\14000006]\r\n\
+        [BCD00000000\\Objects\\{{{BM}}}\\Elements\\14000006]\r\n\
         \"Element\"=hex(7):{bm_inherit}\r\n\
         \r\n\
-        [Objects\\{{{BM}}}\\Elements\\23000003]\r\n\
+        [BCD00000000\\Objects\\{{{BM}}}\\Elements\\23000003]\r\n\
         \"Element\"=hex:{ldr}\r\n\
         \r\n\
-        [Objects\\{{{BM}}}\\Elements\\24000001]\r\n\
+        [BCD00000000\\Objects\\{{{BM}}}\\Elements\\24000001]\r\n\
         \"Element\"=hex(7):{ldr_list}\r\n\
         \r\n\
-        [Objects\\{{{BM}}}\\Elements\\25000004]\r\n\
+        [BCD00000000\\Objects\\{{{BM}}}\\Elements\\25000004]\r\n\
         \"Element\"=hex(b):1e,00,00,00,00,00,00,00\r\n\
         \r\n\
-        [Objects\\{{{BL}}}\\Description]\r\n\
+        [BCD00000000\\Objects\\{{{BL}}}\\Description]\r\n\
         \"Type\"=dword:10200003\r\n\
         \r\n\
-        [Objects\\{{{BL}}}\\Elements\\11000001]\r\n\
+        [BCD00000000\\Objects\\{{{BL}}}\\Elements\\11000001]\r\n\
         \"Element\"=hex:{dev}\r\n\
         \r\n\
-        [Objects\\{{{BL}}}\\Elements\\12000002]\r\n\
+        [BCD00000000\\Objects\\{{{BL}}}\\Elements\\12000002]\r\n\
         \"Element\"=hex:{winload}\r\n\
         \r\n\
-        [Objects\\{{{BL}}}\\Elements\\12000004]\r\n\
+        [BCD00000000\\Objects\\{{{BL}}}\\Elements\\12000004]\r\n\
         \"Element\"=hex:{desc}\r\n\
         \r\n\
-        [Objects\\{{{BL}}}\\Elements\\14000006]\r\n\
+        [BCD00000000\\Objects\\{{{BL}}}\\Elements\\14000006]\r\n\
         \"Element\"=hex(7):{bl_inherit}\r\n\
         \r\n\
-        [Objects\\{{{BL}}}\\Elements\\21000001]\r\n\
+        [BCD00000000\\Objects\\{{{BL}}}\\Elements\\21000001]\r\n\
         \"Element\"=hex:{dev}\r\n\
         \r\n\
-        [Objects\\{{{BL}}}\\Elements\\22000002]\r\n\
+        [BCD00000000\\Objects\\{{{BL}}}\\Elements\\22000002]\r\n\
         \"Element\"=hex:{sysroot}\r\n\
         ",
         BM         = BOOT_MGR_GUID,
@@ -266,10 +266,30 @@ pub fn create_bcd(
         .status()
         .context("hivexregedit")?;
 
+    // Keep .reg for diagnosis if merge fails
+    if !status.success() {
+        bail!(
+            "hivexregedit failed — .reg file left at {} for inspection",
+            reg_path.display()
+        );
+    }
     let _ = std::fs::remove_file(&reg_path);
 
-    if !status.success() {
-        bail!("hivexregedit failed — check the .reg content / hive compatibility");
+    // Verify: export the merged hive and check our objects are present
+    let export = Command::new("hivexregedit")
+        .args(["--export", bcd_dest.to_str().unwrap()])
+        .output();
+    if let Ok(out) = export {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let has_bm = text.contains(BOOT_MGR_GUID);
+        let has_bl = text.contains(BOOT_LDR_GUID);
+        if !has_bm || !has_bl {
+            bail!(
+                "BCD created but objects missing (bm={}, bl={}) — inspect with:\n  \
+                 hivexregedit --export {}",
+                has_bm, has_bl, bcd_dest.display()
+            );
+        }
     }
 
     Ok(())
