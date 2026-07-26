@@ -189,8 +189,12 @@ pub fn create_bcd(
     let reg = format!(
         "Windows Registry Editor Version 5.00\r\n\
         \r\n\
+        [BCD00000000\\Objects\\{{{BM}}}]\r\n\
+        \r\n\
         [BCD00000000\\Objects\\{{{BM}}}\\Description]\r\n\
         \"Type\"=dword:10100002\r\n\
+        \r\n\
+        [BCD00000000\\Objects\\{{{BM}}}\\Elements]\r\n\
         \r\n\
         [BCD00000000\\Objects\\{{{BM}}}\\Elements\\11000001]\r\n\
         \"Element\"=hex:{dev}\r\n\
@@ -207,8 +211,12 @@ pub fn create_bcd(
         [BCD00000000\\Objects\\{{{BM}}}\\Elements\\25000004]\r\n\
         \"Element\"=hex(b):1e,00,00,00,00,00,00,00\r\n\
         \r\n\
+        [BCD00000000\\Objects\\{{{BL}}}]\r\n\
+        \r\n\
         [BCD00000000\\Objects\\{{{BL}}}\\Description]\r\n\
         \"Type\"=dword:10200003\r\n\
+        \r\n\
+        [BCD00000000\\Objects\\{{{BL}}}\\Elements]\r\n\
         \r\n\
         [BCD00000000\\Objects\\{{{BL}}}\\Elements\\11000001]\r\n\
         \"Element\"=hex:{dev}\r\n\
